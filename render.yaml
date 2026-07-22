@@ -1,0 +1,39 @@
+services:
+  # =============================================
+  # Serviço Principal: Python Flask
+  # Serve a SPA React + API REST completa
+  # =============================================
+  - type: web
+    name: codetracker-ete
+    runtime: python
+    region: oregon
+    plan: free
+    branch: main
+    buildCommand: |
+      pip install -r requirements.txt
+      npm install
+      npm run build
+    startCommand: gunicorn app:app --workers 2 --timeout 120 --bind 0.0.0.0:$PORT
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: FLASK_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false  # Definir manualmente no dashboard Render
+      - key: NEON_AUTH_SECRET
+        sync: false
+      - key: NEON_AUTH_JWKS_URL
+        sync: false
+      - key: NEON_AUTH_PROJECT_ID
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: VITE_NEON_AUTH_PROJECT_ID
+        sync: false
+      - key: VITE_NEON_AUTH_PUBLISHABLE_KEY
+        sync: false
+      - key: VITE_API_URL
+        value: https://codetracker-ete.onrender.com
