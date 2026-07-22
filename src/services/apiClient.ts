@@ -54,6 +54,13 @@ async function apiFetch<T>(
 }
 
 // ─────────────────────────────────────────────
+// AUTH / PERFIL
+// ─────────────────────────────────────────────
+export async function getMe(): Promise<{ auth_user_id: string; role: "admin" | "professor" | "aluno"; entity_id: string | null }> {
+  return apiFetch("/api/me");
+}
+
+// ─────────────────────────────────────────────
 // TURMAS
 // ─────────────────────────────────────────────
 export async function getTurmas(): Promise<ClassItem[]> {

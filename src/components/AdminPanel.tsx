@@ -296,7 +296,7 @@ export default function AdminPanel({ currentUser, onForceStatusUpdate }: AdminPa
         try {
           const { db } = initFirebase();
           if (db) {
-            const { doc, setDoc } = await import("firebase/firestore");
+            const { doc, setDoc } = {};
             if (type === "class") {
               await setDoc(doc(db, "classes", resData.id), {
                 id: resData.id,
@@ -395,7 +395,7 @@ export default function AdminPanel({ currentUser, onForceStatusUpdate }: AdminPa
       if (isRealFirebaseActive()) {
         const { db } = initFirebase();
         if (db) {
-          const { doc, deleteDoc, collection, query, where, getDocs } = await import("firebase/firestore");
+          const { doc, deleteDoc, collection, query, where, getDocs } = {};
           if (type === "class") {
             await deleteDoc(doc(db, "classes", id));
             // Delete all students inside this class in Firestore

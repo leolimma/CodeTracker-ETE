@@ -1,22 +1,23 @@
 import React, { useState, useEffect } from "react";
-import { Users, Terminal, Clock, ShieldAlert, Shield, Lock, LogOut } from "lucide-react";
+import { Users, Terminal, Clock, ShieldAlert, Shield, LogOut } from "lucide-react";
 import TeacherDashboard from "./components/TeacherDashboard";
 import StudentPortal from "./components/StudentPortal";
 import AdminPanel from "./components/AdminPanel";
-import FirebaseAuthPanel from "./components/FirebaseAuthPanel";
+import AuthPanel from "./components/AuthPanel";
 import { Student } from "./types";
-import { AppUser, UserRole, logoutFirebase, subscribeToAuth } from "./services/firebaseAuth";
+import { AuthUser, getCurrentUser, signOut } from "./services/neonAuth";
+import { getMe } from "./services/apiClient";
 
 // RBAC View Permissions Definition
-const VIEW_PERMISSIONS: Record<string, UserRole[]> = {
+const VIEW_PERMISSIONS: Record<string, string[]> = {
   teacher: ["admin", "professor"],
   student: ["admin", "professor", "aluno"],
   admin: ["admin"],
-  firebase: ["admin", "professor", "aluno"]
+  auth: ["admin", "professor", "aluno"]
 };
 
 // Helper to find a safe view for redirection based on role
-const getSafeDefaultView = (role: UserRole): "teacher" | "student" | "admin" | "firebase" => {
+const getSafeDefaultView = (role: string): "teacher" | "student" | "admin" | "auth" => {
   if (role === "admin") return "admin";
   if (role === "professor") return "teacher";
   return "student";
@@ -68,7 +69,7 @@ function AccessDeniedView({
         </button>
         <button
           onClick={onSwitchAccount}
-          className="flex-1 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 py-2.5 px-4 rounded-md transition-all cursor-pointer shadow-sm shadow-blue-500/10"
+          className="flex-1 text-xs font-bold text-white bg-[#1A237E] hover:bg-indigo-900 py-2.5 px-4 rounded-md transition-all cursor-pointer shadow-sm shadow-indigo-900/10"
         >
           Mudar de Conta / Login
         </button>
@@ -78,24 +79,68 @@ function AccessDeniedView({
 }
 
 export default function App() {
-  const [viewMode, setViewMode] = useState<"teacher" | "student" | "admin" | "firebase">("firebase");
+  const [viewMode, setViewMode] = useState<"teacher" | "student" | "admin" | "auth">("auth");
   const [lastUpdateTimestamp, setLastUpdateTimestamp] = useState<number>(0);
   const [activeSimulatedStudent, setActiveSimulatedStudent] = useState<Student | null>(null);
   const [currentTime, setCurrentTime] = useState<string>("");
-  const [firebaseUser, setFirebaseUser] = useState<AppUser | null>(null);
+  const [neonUser, setNeonUser] = useState<AuthUser | null>(null);
+  const [isInitializing, setIsInitializing] = useState<boolean>(true);
 
-  // Subscribe to real-time auth changes
+  // Check auth session on mount
   useEffect(() => {
-    const unsubscribe = subscribeToAuth((user) => {
-      setFirebaseUser(user);
-      if (user) {
-        setViewMode(getSafeDefaultView(user.role));
-      } else {
-        setViewMode("firebase");
+    async function checkSession() {
+      try {
+        const user = await getCurrentUser();
+        if (user) {
+          const me = await getMe();
+          setNeonUser({
+            id: user.id,
+            email: user.email,
+            displayName: user.displayName,
+            role: me.role,
+            entityId: me.entity_id
+          });
+          setViewMode(getSafeDefaultView(me.role));
+        } else {
+          setNeonUser(null);
+          setViewMode("auth");
+        }
+      } catch (err) {
+        console.error("Erro ao validar sessão:", err);
+        setNeonUser(null);
+        setViewMode("auth");
+      } finally {
+        setIsInitializing(false);
       }
-    });
-    return () => unsubscribe();
+    }
+    checkSession();
   }, []);
+
+  // Handle successful login from AuthPanel
+  const handleUserLoginChange = async (user: AuthUser | null) => {
+    if (user) {
+      // O AuthPanel passou um AuthUser provisório após o login
+      // Precisamos buscar o perfil completo via API para ter o role correto
+      try {
+        const me = await getMe();
+        const fullUser: AuthUser = {
+          ...user,
+          role: me.role,
+          entityId: me.entity_id
+        };
+        setNeonUser(fullUser);
+        setViewMode(getSafeDefaultView(me.role));
+      } catch (err) {
+        console.error("Falha ao resolver perfil pós-login:", err);
+        await signOut();
+        setNeonUser(null);
+        setViewMode("auth");
+      }
+    } else {
+      setNeonUser(null);
+      setViewMode("auth");
+    }
+  };
 
   // UTC or local clock ticker
   useEffect(() => {
@@ -108,25 +153,17 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // Force redirect to Firebase auth connection panel if not authenticated
+  // Force redirect to Auth connection panel if not authenticated
   useEffect(() => {
-    if (!firebaseUser && viewMode !== "firebase") {
-      setViewMode("firebase");
+    if (!isInitializing && !neonUser && viewMode !== "auth") {
+      setViewMode("auth");
     }
-  }, [firebaseUser, viewMode]);
-
-  // Helper to check if a specific view tab is currently locked for the user
-  const isTabLocked = (mode: "teacher" | "student" | "admin" | "firebase") => {
-    if (mode === "firebase") return false;
-    if (!firebaseUser) return true;
-    const allowed = VIEW_PERMISSIONS[mode];
-    return !allowed.includes(firebaseUser.role);
-  };
+  }, [neonUser, viewMode, isInitializing]);
 
   // Determine if user has authorization to view current viewMode
-  const isAuthorized = firebaseUser 
-    ? VIEW_PERMISSIONS[viewMode].includes(firebaseUser.role) 
-    : viewMode === "firebase";
+  const isAuthorized = neonUser 
+    ? VIEW_PERMISSIONS[viewMode].includes(neonUser.role) 
+    : viewMode === "auth";
 
   // Force sync event
   const triggerStatusUpdateSync = () => {
@@ -146,17 +183,24 @@ export default function App() {
     triggerStatusUpdateSync();
   };
 
-  if (viewMode === "firebase") {
+  if (isInitializing) {
     return (
-      <FirebaseAuthPanel
-        currentUser={firebaseUser}
-        onUserLoginChange={(user) => setFirebaseUser(user)}
+      <div className="min-h-screen flex items-center justify-center bg-[#F5F7FA]">
+        <div className="animate-spin text-[#1A237E]"><Terminal className="w-8 h-8" /></div>
+      </div>
+    );
+  }
+
+  if (viewMode === "auth") {
+    return (
+      <AuthPanel
+        onUserLoginChange={handleUserLoginChange}
       />
     );
   }
 
   return (
-    <div className="min-h-screen bg-brand-bg flex flex-col font-sans selection:bg-blue-500/10 selection:text-brand-primary">
+    <div className="min-h-screen bg-slate-50 flex flex-col font-sans selection:bg-indigo-500/10 selection:text-[#1A237E]">
       
       {/* Top Application Header Bar */}
       <header className="sticky top-0 z-40 bg-white border-b border-slate-200 py-2 px-4 md:px-5 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
@@ -164,38 +208,38 @@ export default function App() {
           
           {/* Logo Brand */}
           <div className="flex items-center gap-2">
-            <div className="bg-brand-primary p-1.5 rounded-md text-white shadow-sm shadow-brand-primary/10">
+            <div className="bg-[#1A237E] p-1.5 rounded-md text-white shadow-sm shadow-indigo-900/10">
               <Terminal className="w-4 h-4" />
             </div>
             <div>
               <div className="flex items-center gap-1.5">
                 <span className="font-bold text-slate-800 text-base tracking-tight leading-none">CodeTracker</span>
-                <span className="text-[10px] bg-blue-600 text-white font-black px-1.5 py-0.5 rounded-sm uppercase tracking-wider">ETE</span>
+                <span className="text-[10px] bg-[#EF6C00] text-white font-black px-1.5 py-0.5 rounded-sm uppercase tracking-wider">ETE</span>
               </div>
               <p className="text-[9px] text-slate-400 font-semibold uppercase tracking-wider mt-0.5">Laboratório ETE Pedro Leão Leal</p>
             </div>
           </div>
 
           {/* Staff Back Button (Only visible for Professors/Admins when simulating or viewing other views) */}
-          {firebaseUser && (firebaseUser.role === "professor" || firebaseUser.role === "admin") && viewMode === "student" && (
+          {neonUser && (neonUser.role === "professor" || neonUser.role === "admin") && viewMode === "student" && (
             <button
               onClick={() => {
                 handleLogoutSimulatedStudent();
-                setViewMode(getSafeDefaultView(firebaseUser.role));
+                setViewMode(getSafeDefaultView(neonUser.role));
               }}
-              className="px-3.5 py-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-brand-primary text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1.5 shadow-xs"
+              className="px-3.5 py-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-[#1A237E] text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1.5 shadow-xs"
             >
-              <Users className="w-3.5 h-3.5 text-brand-primary" />
+              <Users className="w-3.5 h-3.5 text-[#1A237E]" />
               <span>Voltar ao Painel do Docente</span>
             </button>
           )}
 
-          {firebaseUser && firebaseUser.role === "admin" && viewMode === "teacher" && (
+          {neonUser && neonUser.role === "admin" && viewMode === "teacher" && (
             <button
               onClick={() => {
                 setViewMode("admin");
               }}
-              className="px-3.5 py-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-brand-primary text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1.5 shadow-xs"
+              className="px-3.5 py-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-[#1A237E] text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1.5 shadow-xs"
             >
               <Shield className="w-3.5 h-3.5 text-red-500" />
               <span>Voltar ao Painel Admin</span>
@@ -209,21 +253,21 @@ export default function App() {
               <span>{currentTime}</span>
             </div>
 
-            {firebaseUser && (
+            {neonUser && (
               <div className="flex items-center gap-2 border-l border-slate-200 pl-3">
-                <div className="w-7 h-7 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center font-bold text-[10px] uppercase shadow-sm border border-blue-100">
-                  {firebaseUser.name.substring(0, 2).toUpperCase()}
+                <div className="w-7 h-7 rounded-full bg-indigo-50 text-[#1A237E] flex items-center justify-center font-bold text-[10px] uppercase shadow-sm border border-indigo-100">
+                  {neonUser.displayName.substring(0, 2).toUpperCase()}
                 </div>
                 <div className="hidden sm:block text-left">
-                  <p className="text-[10px] font-bold text-slate-800 leading-none">{firebaseUser.name}</p>
-                  <span className="text-[9px] text-blue-600 font-mono font-bold uppercase tracking-wider">{firebaseUser.role}</span>
+                  <p className="text-[10px] font-bold text-slate-800 leading-none">{neonUser.displayName}</p>
+                  <span className="text-[9px] text-[#1A237E] font-mono font-bold uppercase tracking-wider">{neonUser.role}</span>
                 </div>
                 <button
                   onClick={async () => {
                     try {
-                      await logoutFirebase();
-                      setFirebaseUser(null);
-                      setViewMode("firebase");
+                      await signOut();
+                      setNeonUser(null);
+                      setViewMode("auth");
                     } catch (e) {
                       console.error("Erro ao deslogar:", e);
                     }
@@ -242,12 +286,16 @@ export default function App() {
 
       {/* Main Container View Area */}
       <main className="flex-1 p-3 md:p-4 max-w-7xl w-full mx-auto">
-        {!isAuthorized && firebaseUser ? (
+        {!isAuthorized && neonUser ? (
           <AccessDeniedView
-            currentRole={firebaseUser.role}
+            currentRole={neonUser.role}
             requiredRoles={VIEW_PERMISSIONS[viewMode]}
-            onGoToSafeView={() => setViewMode(getSafeDefaultView(firebaseUser.role))}
-            onSwitchAccount={() => setViewMode("firebase")}
+            onGoToSafeView={() => setViewMode(getSafeDefaultView(neonUser.role))}
+            onSwitchAccount={async () => {
+              await signOut();
+              setNeonUser(null);
+              setViewMode("auth");
+            }}
           />
         ) : (
           <>
@@ -267,7 +315,10 @@ export default function App() {
                   onStatusUpdateTrigger={triggerStatusUpdateSync}
                   overrideStudent={activeSimulatedStudent}
                   onLogoutOverride={handleLogoutSimulatedStudent}
-                  firebaseUser={firebaseUser}
+                  firebaseUser={
+                    // Adaptação para o StudentPortal que esperava AppUser do Firebase
+                    { ...neonUser, name: neonUser.displayName } as any
+                  }
                 />
               </div>
             )}
@@ -275,7 +326,7 @@ export default function App() {
             {viewMode === "admin" && (
               <div className="min-h-[calc(100vh-110px)]">
                 <AdminPanel
-                  currentUser={firebaseUser ? { name: firebaseUser.name, role: firebaseUser.role } : { name: "Administrador", role: "admin" }}
+                  currentUser={{ name: neonUser.displayName, role: neonUser.role }}
                   onForceStatusUpdate={triggerStatusUpdateSync}
                 />
               </div>

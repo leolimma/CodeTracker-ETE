@@ -273,7 +273,7 @@ export default function StudentPortal({ onStatusUpdateTrigger, overrideStudent, 
       setSearchTerm("");
       
       try {
-        const { logoutFirebase } = await import("../services/firebaseAuth");
+        const { logoutFirebase } = {};
         await logoutFirebase();
       } catch (err) {
         console.error("Error signing out during student portal logout:", err);

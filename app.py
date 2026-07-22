@@ -128,6 +128,21 @@ def health_check():
 
 
 # ─────────────────────────────────────────────
+# ME (Perfil Básico)
+# ─────────────────────────────────────────────
+@app.route("/api/me", methods=["GET"])
+@require_auth()
+def get_me():
+    """Retorna o role e os identificadores do usuário atual logado."""
+    return jsonify({
+        "success": True,
+        "auth_user_id": g.auth_user_id,
+        "role": g.user_role,
+        "entity_id": g.entity_id
+    })
+
+
+# ─────────────────────────────────────────────
 # TURMAS
 # ─────────────────────────────────────────────
 @app.route("/api/turmas", methods=["GET"])
@@ -1137,6 +1152,17 @@ Responda em Português Brasileiro."""
         "exercicio_titulo": exercicio["titulo"]
     })
 
+
+# ─────────────────────────────────────────────
+# SERVIR APLICAÇÃO REACT (SPA)
+# ─────────────────────────────────────────────
+@app.route("/", defaults={"path": ""})
+@app.route("/<path:path>")
+def serve_react_app(path):
+    if path != "" and os.path.exists(DIST_DIR / path):
+        return send_from_directory(DIST_DIR, path)
+    else:
+        return send_from_directory(DIST_DIR, "index.html")
 
 # ─────────────────────────────────────────────
 # INICIALIZAÇÃO

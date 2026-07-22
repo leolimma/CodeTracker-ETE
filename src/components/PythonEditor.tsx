@@ -1,3 +1,4 @@
+import AITutorChat from "./AITutorChat";
 import React, { useState, useEffect, useRef } from "react";
 import { 
   Play, 
@@ -16,7 +17,13 @@ import {
   ChevronsRight,
   User,
   ExternalLink,
-  ChevronRight
+  ChevronRight,
+  RotateCcw,
+  XCircle,
+  AlertCircle,
+  BookOpen,
+  Send,
+  TerminalSquare
 } from "lucide-react";
 import { Student, Exercise } from "../types";
 import { 
@@ -25,6 +32,9 @@ import {
   saveStudentProgressFirestore,
   subscribeStudentProgress 
 } from "../services/firebaseDb";
+import CodeMirror from "@uiw/react-codemirror";
+import { python } from "@codemirror/lang-python";
+import { vscodeDark } from "@uiw/codemirror-theme-vscode";
 
 interface PythonEditorProps {
   student: Student;
@@ -843,6 +853,8 @@ stderr.seek(0)
         </div>
       )}
 
+      {/* AI Tutor Chat Widget */}
+      <AITutorChat exercicioId={exercise.id} codigoAtual={currentCode} />
     </div>
   );
 }
