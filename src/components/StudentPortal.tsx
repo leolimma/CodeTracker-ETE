@@ -14,13 +14,7 @@ import {
 } from "lucide-react";
 import { ClassItem, Student, Exercise } from "../types";
 import PythonEditor from "./PythonEditor";
-import { 
-  isRealFirebaseActive, 
-  subscribeClasses, 
-  subscribeStudents, 
-  subscribeExercises, 
-  updateStudentStatusFirestore 
-} from "../services/firebaseDb";
+
 
 interface StudentPortalProps {
   onStatusUpdateTrigger?: () => void;
@@ -48,16 +42,7 @@ export default function StudentPortal({ onStatusUpdateTrigger, overrideStudent, 
 
   // 1. Load Classes (Realtime Firestore or Poll)
   useEffect(() => {
-    if (isRealFirebaseActive()) {
-      const unsubscribe = subscribeClasses((classesList) => {
-        setClasses(classesList);
-        if (classesList.length > 0 && !selectedClassId) {
-          // Find if there's already a class selected, else default to first
-          setSelectedClassId((prev) => prev || classesList[0].id);
-        }
-      });
-      return unsubscribe;
-    } else {
+    
       fetch("/api/classes")
         .then((res) => res.json())
         .then((data) => {
@@ -67,7 +52,7 @@ export default function StudentPortal({ onStatusUpdateTrigger, overrideStudent, 
           }
         })
         .catch((err) => console.error("Error loading classes:", err));
-    }
+    
   }, []);
 
   // Sync with override student if provided (useful for side-by-side simulator)
@@ -79,40 +64,27 @@ export default function StudentPortal({ onStatusUpdateTrigger, overrideStudent, 
     }
   }, [overrideStudent]);
 
-  // 2. Load Students when selected class changes (Realtime Firestore or Poll)
+  // 2. Load Students when selected class changes
   useEffect(() => {
     if (!selectedClassId) return;
 
-    if (isRealFirebaseActive()) {
-      const unsubscribe = subscribeStudents(selectedClassId, (studentsList) => {
-        setStudents(studentsList);
-      });
+    fetch(`/api/classes/${selectedClassId}/students`)
+      .then((res) => res.json())
+      .then((data) => {
+        setStudents(data);
+        setSelectedStudentId("");
+      })
+      .catch((err) => console.error("Error loading students:", err));
 
-      const cls = classes.find((c) => c.id === selectedClassId);
-      if (cls) {
-        setCurrentClass(cls);
-      }
-
-      return unsubscribe;
-    } else {
-      fetch(`/api/classes/${selectedClassId}/students`)
-        .then((res) => res.json())
-        .then((data) => {
-          setStudents(data);
-          setSelectedStudentId("");
-        })
-        .catch((err) => console.error("Error loading students:", err));
-
-      const cls = classes.find((c) => c.id === selectedClassId);
-      if (cls) {
-        setCurrentClass(cls);
-      }
+    const cls = classes.find((c) => c.id === selectedClassId);
+    if (cls) {
+      setCurrentClass(cls);
     }
   }, [selectedClassId, classes]);
 
-  // 3. Keep current student object in sync with realtime class student subscription changes
+  // 3. Keep current student object in sync
   useEffect(() => {
-    if (!isLoggedIn || !currentStudent || !isRealFirebaseActive()) return;
+    if (!isLoggedIn || !currentStudent) return;
     const matched = students.find((s) => s.id === currentStudent.id);
     if (matched) {
       setCurrentStudent(matched);
@@ -128,13 +100,12 @@ export default function StudentPortal({ onStatusUpdateTrigger, overrideStudent, 
     if (!emailToMatch) return;
 
     let isMounted = true;
-    let unsubscribe: (() => void) | null = null;
 
     const attemptAutoLogin = async () => {
-      if (isRealFirebaseActive()) {
-        const { subscribeAllStudents } = await import("../services/firebaseDb");
-        if (!isMounted) return;
-        unsubscribe = subscribeAllStudents((allStudents) => {
+      try {
+        const res = await fetch("/api/students");
+        if (res.ok) {
+          const allStudents: Student[] = await res.json();
           if (!isMounted) return;
           const match = allStudents.find((s) => s.email?.toLowerCase().trim() === emailToMatch);
           if (match) {
@@ -143,30 +114,10 @@ export default function StudentPortal({ onStatusUpdateTrigger, overrideStudent, 
             setCurrentStudent(match);
             setIsLoggedIn(true);
             setStatusMsg(`Status: ${getFriendlyStatus(match.status)}`);
-            if (unsubscribe) {
-              unsubscribe();
-              unsubscribe = null;
-            }
           }
-        });
-      } else {
-        try {
-          const res = await fetch("/api/students");
-          if (res.ok) {
-            const allStudents: Student[] = await res.json();
-            if (!isMounted) return;
-            const match = allStudents.find((s) => s.email?.toLowerCase().trim() === emailToMatch);
-            if (match) {
-              setSelectedClassId(match.classId);
-              setSelectedStudentId(match.id);
-              setCurrentStudent(match);
-              setIsLoggedIn(true);
-              setStatusMsg(`Status: ${getFriendlyStatus(match.status)}`);
-            }
-          }
-        } catch (err) {
-          console.error("Error auto-logging student:", err);
         }
+      } catch (err) {
+        console.error("Error auto-logging student:", err);
       }
     };
 
@@ -174,9 +125,6 @@ export default function StudentPortal({ onStatusUpdateTrigger, overrideStudent, 
 
     return () => {
       isMounted = false;
-      if (unsubscribe) {
-        unsubscribe();
-      }
     };
   }, [firebaseUser, isLoggedIn, overrideStudent]);
 
@@ -184,24 +132,7 @@ export default function StudentPortal({ onStatusUpdateTrigger, overrideStudent, 
   useEffect(() => {
     if (!isLoggedIn || !currentStudent) return;
 
-    if (isRealFirebaseActive()) {
-      // Subscribe to exercises list once to find the active exercise
-      const unsubscribeExercises = subscribeExercises((exercisesList) => {
-        setAllExercises(exercisesList);
-        // Class is already updated in realtime via classes subscription. Let's find it.
-        const cls = classes.find((c) => c.id === currentStudent.classId);
-        if (cls) {
-          setCurrentClass(cls);
-          if (cls.activeExerciseId) {
-            const ex = exercisesList.find((e) => e.id === cls.activeExerciseId);
-            setActiveExercise(ex || null);
-          } else {
-            setActiveExercise(null);
-          }
-        }
-      });
-      return unsubscribeExercises;
-    } else {
+    
       const fetchActiveState = () => {
         fetch("/api/classes")
           .then((res) => res.json())
@@ -227,7 +158,7 @@ export default function StudentPortal({ onStatusUpdateTrigger, overrideStudent, 
       fetchActiveState();
       const interval = setInterval(fetchActiveState, 3000); // Poll active state every 3 seconds
       return () => clearInterval(interval);
-    }
+    
   }, [isLoggedIn, currentStudent, classes]);
 
   // Handle student login action
@@ -235,15 +166,7 @@ export default function StudentPortal({ onStatusUpdateTrigger, overrideStudent, 
     e.preventDefault();
     if (!selectedClassId || !selectedStudentId) return;
 
-    if (isRealFirebaseActive()) {
-      const std = students.find((s) => s.id === selectedStudentId);
-      if (std) {
-        setCurrentStudent(std);
-        setIsLoggedIn(true);
-        setStatusMsg(`Status: ${getFriendlyStatus(std.status)}`);
-      }
-      return;
-    }
+
 
     fetch("/api/student/login", {
       method: "POST",
@@ -272,12 +195,7 @@ export default function StudentPortal({ onStatusUpdateTrigger, overrideStudent, 
       setSelectedStudentId("");
       setSearchTerm("");
       
-      try {
-        const { logoutFirebase } = {};
-        await logoutFirebase();
-      } catch (err) {
-        console.error("Error signing out during student portal logout:", err);
-      }
+
       window.location.reload();
     }
   };
@@ -308,29 +226,7 @@ export default function StudentPortal({ onStatusUpdateTrigger, overrideStudent, 
       newProgress = Math.min(90, currentStudent.progress + 15);
     }
 
-    if (isRealFirebaseActive()) {
-      updateStudentStatusFirestore(currentStudent, newStatus, newProgress, currentClass?.activeExerciseId || null)
-        .then(() => {
-          // Setup interactive notification messages
-          if (newStatus === "CODING") {
-            setStatusMsg("Status Atualizado: Desenvolvendo código do exercício.");
-          } else if (newStatus === "HELP") {
-            setStatusMsg("Status Atualizado: Chamado de ajuda enviado ao professor. Continue tentando!");
-          } else if (newStatus === "PAUSED") {
-            setStatusMsg("Status Atualizado: Atividade pausada.");
-          } else if (newStatus === "COMPLETED") {
-            setStatusMsg("Status Atualizado: Parabéns! Exercício finalizado e enviado para revisão.");
-          }
 
-          // Notify parent component (dashboard) to trigger refresh
-          if (onStatusUpdateTrigger) {
-            onStatusUpdateTrigger();
-          }
-        })
-        .catch((err) => console.error("Error updating status in Firestore:", err))
-        .finally(() => setSubmittingStatus(null));
-      return;
-    }
 
     fetch("/api/student/status", {
       method: "POST",

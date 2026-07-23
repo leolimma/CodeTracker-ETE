@@ -637,12 +637,15 @@ def atualizar_status():
     """
     data = request.json or request.form.to_dict()
     atividade_id = data.get("atividade_id")
+    exercicio_id = data.get("exercicio_id")
     novo_estado = data.get("estado_atual")
     novo_progresso = data.get("progresso")
     observacao = data.get("observacao")
 
-    if not atividade_id or not novo_estado:
-        return jsonify({"success": False, "error": "atividade_id e estado_atual são obrigatórios."}), 400
+    if not atividade_id and not exercicio_id:
+        return jsonify({"success": False, "error": "atividade_id ou exercicio_id são obrigatórios."}), 400
+    if not novo_estado:
+        return jsonify({"success": False, "error": "estado_atual é obrigatório."}), 400
 
     estados_validos = ["Não Iniciado", "Codificando", "Preciso de Ajuda", "Pausado", "Concluído"]
     if novo_estado not in estados_validos:
@@ -650,6 +653,19 @@ def atualizar_status():
 
     with get_db_connection() as conn:
         with conn.cursor() as cur:
+            # Se vier exercicio_id e for aluno, buscar atividade_id
+            if not atividade_id and exercicio_id and g.user_role == "aluno":
+                cur.execute("SELECT id FROM alunos WHERE auth_user_id = %s", (g.auth_user_id,))
+                aluno_row = cur.fetchone()
+                if aluno_row:
+                    cur.execute("SELECT id FROM status_atividades WHERE aluno_id = %s AND exercicio_id = %s", (aluno_row["id"], exercicio_id))
+                    ativ = cur.fetchone()
+                    if ativ:
+                        atividade_id = ativ["id"]
+
+            if not atividade_id:
+                return jsonify({"success": False, "error": "Atividade não encontrada ou não especificada."}), 404
+
             # Buscar atividade
             cur.execute("SELECT * FROM status_atividades WHERE id = %s", (atividade_id,))
             atividade = cur.fetchone()
@@ -737,13 +753,26 @@ def salvar_observacao():
     """Auto-save de observações (chamado a cada 10s pelo frontend)."""
     data = request.json or {}
     atividade_id = data.get("atividade_id")
+    exercicio_id = data.get("exercicio_id")
     observacao = data.get("observacao", "")
 
-    if not atividade_id:
-        return jsonify({"success": False, "error": "atividade_id é obrigatório."}), 400
+    if not atividade_id and not exercicio_id:
+        return jsonify({"success": False, "error": "atividade_id ou exercicio_id são obrigatórios."}), 400
 
     with get_db_connection() as conn:
         with conn.cursor() as cur:
+            if not atividade_id and exercicio_id and g.user_role == "aluno":
+                cur.execute("SELECT id FROM alunos WHERE auth_user_id = %s", (g.auth_user_id,))
+                aluno_row = cur.fetchone()
+                if aluno_row:
+                    cur.execute("SELECT id FROM status_atividades WHERE aluno_id = %s AND exercicio_id = %s", (aluno_row["id"], exercicio_id))
+                    ativ = cur.fetchone()
+                    if ativ:
+                        atividade_id = ativ["id"]
+
+            if not atividade_id:
+                return jsonify({"success": False, "error": "Atividade não encontrada."}), 404
+
             cur.execute("""
                 UPDATE status_atividades
                 SET observacao = %s, updated_at = NOW()
@@ -762,13 +791,26 @@ def salvar_codigo():
     """Salva o código Python atual do aluno (auto-save)."""
     data = request.json or {}
     atividade_id = data.get("atividade_id")
+    exercicio_id = data.get("exercicio_id")
     codigo = data.get("codigo", "")
 
-    if not atividade_id:
-        return jsonify({"success": False, "error": "atividade_id é obrigatório."}), 400
+    if not atividade_id and not exercicio_id:
+        return jsonify({"success": False, "error": "atividade_id ou exercicio_id são obrigatórios."}), 400
 
     with get_db_connection() as conn:
         with conn.cursor() as cur:
+            if not atividade_id and exercicio_id and g.user_role == "aluno":
+                cur.execute("SELECT id FROM alunos WHERE auth_user_id = %s", (g.auth_user_id,))
+                aluno_row = cur.fetchone()
+                if aluno_row:
+                    cur.execute("SELECT id FROM status_atividades WHERE aluno_id = %s AND exercicio_id = %s", (aluno_row["id"], exercicio_id))
+                    ativ = cur.fetchone()
+                    if ativ:
+                        atividade_id = ativ["id"]
+
+            if not atividade_id:
+                return jsonify({"success": False, "error": "Atividade não encontrada."}), 404
+
             cur.execute("""
                 UPDATE status_atividades
                 SET codigo_salvo = %s, updated_at = NOW()
@@ -1152,17 +1194,6 @@ Responda em Português Brasileiro."""
         "exercicio_titulo": exercicio["titulo"]
     })
 
-
-# ─────────────────────────────────────────────
-# SERVIR APLICAÇÃO REACT (SPA)
-# ─────────────────────────────────────────────
-@app.route("/", defaults={"path": ""})
-@app.route("/<path:path>")
-def serve_react_app(path):
-    if path != "" and os.path.exists(DIST_DIR / path):
-        return send_from_directory(DIST_DIR, path)
-    else:
-        return send_from_directory(DIST_DIR, "index.html")
 
 # ─────────────────────────────────────────────
 # INICIALIZAÇÃO

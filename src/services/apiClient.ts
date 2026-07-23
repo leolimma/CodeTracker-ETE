@@ -197,6 +197,25 @@ export async function salvarCodigo(atividadeId: string, codigo: string): Promise
   });
 }
 
+export async function atualizarStatusPorExercicio(payload: {
+  exercicio_id: string;
+  estado_atual: string;
+  progresso?: number;
+  observacao?: string;
+}): Promise<{ estado_atual: string; progresso: number; tempo_gasto?: string }> {
+  return apiFetch("/api/atividades/status", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function salvarCodigoPorExercicio(exercicioId: string, codigo: string): Promise<void> {
+  await apiFetch("/api/atividades/codigo", {
+    method: "POST",
+    body: JSON.stringify({ exercicio_id: exercicioId, codigo }),
+  });
+}
+
 export async function atribuirNota(payload: {
   atividade_id: string; nota: number; observacao?: string;
 }): Promise<StatusAtividade> {

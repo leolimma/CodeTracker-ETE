@@ -22,20 +22,7 @@ import {
   Volume2
 } from "lucide-react";
 import { ClassItem, Student, Exercise, StatusLog } from "../types";
-import { 
-  isRealFirebaseActive, 
-  subscribeClasses, 
-  subscribeStudents, 
-  subscribeExercises, 
-  subscribeLogs, 
-  assignExerciseFirestore, 
-  createClassFirestore, 
-  createStudentFirestore, 
-  createExerciseFirestore, 
-  gradeStudentFirestore,
-  StudentProgress,
-  subscribeAllProgress
-} from "../services/firebaseDb";
+
 
 interface TeacherDashboardProps {
   onClassChange?: (classId: string) => void;
@@ -133,32 +120,9 @@ export default function TeacherDashboard({ onClassChange, lastUpdateTimestamp, o
 
   // 1. Load classes, exercises, logs (Realtime Firestore or Poll)
   useEffect(() => {
-    if (isRealFirebaseActive()) {
-      setIsRefreshing(true);
-      const unsubscribeClasses = subscribeClasses((classesData) => {
-        setClasses(classesData);
-        if (classesData.length > 0 && !selectedClassId) {
-          setSelectedClassId((prev) => prev || classesData[0].id);
-        }
-        setIsRefreshing(false);
-      });
-
-      const unsubscribeExercises = subscribeExercises((exercisesData) => {
-        setExercises(exercisesData);
-      });
-
-      const unsubscribeLogs = subscribeLogs((logsData) => {
-        setLogs(logsData);
-      });
-
-      return () => {
-        unsubscribeClasses();
-        unsubscribeExercises();
-        unsubscribeLogs();
-      };
-    } else {
+    
       fetchInitialData();
-    }
+    
   }, []);
 
   // Sync refresh on external trigger (like when student portal clicks update)
@@ -172,40 +136,19 @@ export default function TeacherDashboard({ onClassChange, lastUpdateTimestamp, o
   useEffect(() => {
     if (!selectedClassId) return;
     
-    if (isRealFirebaseActive()) {
-      const unsubscribeStudents = subscribeStudents(selectedClassId, (studentsData) => {
-        setStudents(studentsData);
-      });
-      if (onClassChange) {
-        onClassChange(selectedClassId);
-      }
-      return unsubscribeStudents;
-    } else {
+    
       fetchStudents(selectedClassId);
       if (onClassChange) {
         onClassChange(selectedClassId);
       }
-    }
+    
   }, [selectedClassId]);
 
   // Real-time Progress subscription for Python editor
   useEffect(() => {
     if (!selectedClassId) return;
 
-    if (isRealFirebaseActive()) {
-      const unsubscribe = subscribeAllProgress((progressData) => {
-        setAllProgress(progressData);
-        if (selectedProgressStudent) {
-          const updated = progressData.find(
-            p => p.studentId === selectedProgressStudent.id && p.classId === selectedClassId
-          );
-          if (updated) {
-            setViewingProgress(updated);
-          }
-        }
-      }, selectedClassId);
-      return unsubscribe;
-    }
+    
   }, [selectedClassId, selectedProgressStudent]);
 
   // Simulação / Geração de dados de progresso locais (quando Firebase não ativo)
@@ -330,17 +273,7 @@ export default function TeacherDashboard({ onClassChange, lastUpdateTimestamp, o
   const handleAssignExercise = () => {
     if (!selectedClassId) return;
 
-    if (isRealFirebaseActive()) {
-      assignExerciseFirestore(selectedClassId, selectedAssignExerciseId || null)
-        .then(() => {
-          setShowAssignModal(false);
-          if (onForceStatusUpdate) {
-            onForceStatusUpdate();
-          }
-        })
-        .catch(err => console.error("Error assigning exercise in Firestore:", err));
-      return;
-    }
+    
     
     fetch(`/api/classes/${selectedClassId}/assign`, {
       method: "POST",
@@ -363,17 +296,7 @@ export default function TeacherDashboard({ onClassChange, lastUpdateTimestamp, o
     e.preventDefault();
     if (!newClassName || !newClassRoom) return;
 
-    if (isRealFirebaseActive()) {
-      createClassFirestore(newClassName, newClassRoom)
-        .then((newClass) => {
-          setNewClassName("");
-          setNewClassRoom("");
-          setShowNewClassModal(false);
-          setSelectedClassId(newClass.id);
-        })
-        .catch(err => console.error("Error creating class in Firestore:", err));
-      return;
-    }
+    
 
     fetch("/api/classes/create", {
       method: "POST",
@@ -396,22 +319,7 @@ export default function TeacherDashboard({ onClassChange, lastUpdateTimestamp, o
     e.preventDefault();
     if (!newExerciseTitle || !newExerciseDesc) return;
 
-    if (isRealFirebaseActive()) {
-      createExerciseFirestore(
-        newExerciseTitle,
-        newExerciseModule,
-        newExerciseDesc,
-        newExerciseDiff,
-        newExerciseTime
-      )
-        .then(() => {
-          setNewExerciseTitle("");
-          setNewExerciseDesc("");
-          setShowNewExerciseModal(false);
-        })
-        .catch(err => console.error("Error creating exercise in Firestore:", err));
-      return;
-    }
+    
 
     fetch("/api/exercises/create", {
       method: "POST",
@@ -439,15 +347,7 @@ export default function TeacherDashboard({ onClassChange, lastUpdateTimestamp, o
     e.preventDefault();
     if (!newStudentName || !selectedClassId) return;
 
-    if (isRealFirebaseActive()) {
-      createStudentFirestore(newStudentName, selectedClassId)
-        .then(() => {
-          setNewStudentName("");
-          setShowNewStudentModal(false);
-        })
-        .catch(err => console.error("Error creating student in Firestore:", err));
-      return;
-    }
+    
 
     fetch(`/api/classes/${selectedClassId}/students/add`, {
       method: "POST",
@@ -476,19 +376,7 @@ export default function TeacherDashboard({ onClassChange, lastUpdateTimestamp, o
     e.preventDefault();
     if (!activeGradingStudent) return;
 
-    if (isRealFirebaseActive()) {
-      gradeStudentFirestore(
-        activeGradingStudent.id,
-        gradeInput === "" ? null : Number(gradeInput),
-        notesInput
-      )
-        .then(() => {
-          setShowGradingModal(false);
-          setActiveGradingStudent(null);
-        })
-        .catch(err => console.error("Error saving grading remarks in Firestore:", err));
-      return;
-    }
+    
 
     fetch(`/api/students/${activeGradingStudent.id}/grade-notes`, {
       method: "POST",

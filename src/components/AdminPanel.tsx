@@ -23,13 +23,7 @@ import {
 } from "lucide-react";
 import { ClassItem, Student, Exercise } from "../types";
 import { initFirebase } from "../lib/firebase";
-import { 
-  isRealFirebaseActive,
-  subscribeClasses,
-  subscribeAllStudents,
-  subscribeExercises,
-  subscribeUsers
-} from "../services/firebaseDb";
+
 
 // Local types matching server.ts models
 interface Teacher {
@@ -184,43 +178,7 @@ export default function AdminPanel({ currentUser, onForceStatusUpdate }: AdminPa
     let unsubExercises: (() => void) | null = null;
     let unsubUsers: (() => void) | null = null;
 
-    if (isRealFirebaseActive()) {
-      try {
-        if (subscribeClasses) {
-          unsubClasses = subscribeClasses((fetchedClasses) => {
-            setClasses(fetchedClasses || []);
-            setCsvTargetClassId(prev => prev || (fetchedClasses && fetchedClasses.length > 0 ? fetchedClasses[0].id : ""));
-          });
-        }
-
-        if (subscribeAllStudents) {
-          unsubStudents = subscribeAllStudents((fetchedStudents) => {
-            setStudents(fetchedStudents || []);
-          });
-        }
-
-        if (subscribeExercises) {
-          unsubExercises = subscribeExercises((fetchedExercises) => {
-            setExercises(fetchedExercises || []);
-          });
-        }
-
-        const { auth } = initFirebase();
-        const isUserLoggedIn = auth && auth.currentUser !== null;
-        if (isUserLoggedIn && currentUser && currentUser.role === "admin" && subscribeUsers) {
-          unsubUsers = subscribeUsers(
-            (fetchedUsers) => {
-              setUsers(fetchedUsers || []);
-            },
-            (err) => {
-              console.error("Error subscribing to users in AdminPanel:", err);
-            }
-          );
-        }
-      } catch (err) {
-        console.error("Error establishing real-time subscriptions in AdminPanel:", err);
-      }
-    }
+    
 
     return () => {
       if (unsubClasses) unsubClasses();
@@ -292,60 +250,7 @@ export default function AdminPanel({ currentUser, onForceStatusUpdate }: AdminPa
       }
 
       // Sync creation or update to Firestore if real Firebase database is active
-      if (isRealFirebaseActive()) {
-        try {
-          const { db } = initFirebase();
-          if (db) {
-            const { doc, setDoc } = {};
-            if (type === "class") {
-              await setDoc(doc(db, "classes", resData.id), {
-                id: resData.id,
-                name: resData.name,
-                room: resData.room || "",
-                activeExerciseId: resData.activeExerciseId || null
-              }, { merge: true });
-            } else if (type === "student") {
-              await setDoc(doc(db, "students", resData.id), {
-                id: resData.id,
-                classId: resData.classId,
-                name: resData.name,
-                avatar: resData.avatar || resData.name.split(" ").map((n: string) => n[0]).join("").substring(0, 2).toUpperCase() || "👨‍💻",
-                status: resData.status || "IDLE",
-                progress: Number(resData.progress) || 0,
-                grade: resData.grade !== undefined && resData.grade !== null ? Number(resData.grade) : null,
-                notes: resData.notes || "",
-                email: resData.email || "",
-                lastUpdate: resData.lastUpdate || new Date().toISOString()
-              }, { merge: true });
-            } else if (type === "exercise") {
-              await setDoc(doc(db, "exercises", resData.id), {
-                id: resData.id,
-                title: resData.title,
-                module: resData.module,
-                description: resData.description,
-                difficulty: resData.difficulty || "MEDIUM",
-                estimatedTime: Number(resData.estimatedTime) || 15,
-                objetivo_aprendizado: resData.objetivo_aprendizado || "",
-                enunciado: resData.enunciado || resData.description,
-                entrada_esperada: resData.entrada_esperada || "",
-                saida_esperada: resData.saida_esperada || "",
-                exemplo_entrada: resData.exemplo_entrada || "",
-                exemplo_saida: resData.exemplo_saida || "",
-                observacoes: resData.observacoes || ""
-              }, { merge: true });
-            } else if (type === "user") {
-              await setDoc(doc(db, "users", resData.uid), {
-                uid: resData.uid,
-                email: resData.email,
-                name: resData.name,
-                role: resData.role
-              }, { merge: true });
-            }
-          }
-        } catch (firebaseErr) {
-          console.error("Erro ao sincronizar dados com Firestore:", firebaseErr);
-        }
-      }
+      
 
       showAlert(
         `${type === "class" ? "Turma" : type === "student" ? "Aluno" : type === "teacher" ? "Professor" : type === "user" ? "Usuário" : "Exercício"} salvo com sucesso!`
@@ -392,29 +297,7 @@ export default function AdminPanel({ currentUser, onForceStatusUpdate }: AdminPa
     setIsLoading(true);
     try {
       // 1. Sync deletion to Firestore if real Firebase database is active
-      if (isRealFirebaseActive()) {
-        const { db } = initFirebase();
-        if (db) {
-          const { doc, deleteDoc, collection, query, where, getDocs } = {};
-          if (type === "class") {
-            await deleteDoc(doc(db, "classes", id));
-            // Delete all students inside this class in Firestore
-            const q = query(collection(db, "students"), where("classId", "==", id));
-            const snapshot = await getDocs(q);
-            const deletePromises: Promise<void>[] = [];
-            snapshot.forEach((studentDoc) => {
-              deletePromises.push(deleteDoc(doc(db, "students", studentDoc.id)));
-            });
-            await Promise.all(deletePromises);
-          } else if (type === "student") {
-            await deleteDoc(doc(db, "students", id));
-          } else if (type === "exercise") {
-            await deleteDoc(doc(db, "exercises", id));
-          } else if (type === "user") {
-            await deleteDoc(doc(db, "users", id));
-          }
-        }
-      }
+      
 
       // 2. Perform Express JSON Server backend deletion
       const response = await fetch(url, { method: "DELETE" });

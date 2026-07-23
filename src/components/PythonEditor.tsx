@@ -27,14 +27,21 @@ import {
 } from "lucide-react";
 import { Student, Exercise } from "../types";
 import { 
-  StudentProgress, 
-  ProgressHistoryEntry,
-  saveStudentProgressFirestore,
-  subscribeStudentProgress 
-} from "../services/firebaseDb";
+  atualizarStatusPorExercicio,
+  salvarCodigoPorExercicio 
+} from "../services/apiClient";
+
 import CodeMirror from "@uiw/react-codemirror";
 import { python } from "@codemirror/lang-python";
 import { vscodeDark } from "@uiw/codemirror-theme-vscode";
+
+interface ProgressHistoryEntry {
+  id: string;
+  timestamp: string;
+  statusAluno: string;
+  codigo: string;
+  linhasCodigo: number;
+}
 
 interface PythonEditorProps {
   student: Student;
@@ -102,44 +109,7 @@ export default function PythonEditor({
   // Load student progress from Firebase whenever active exercise changes
   useEffect(() => {
     if (!selectedExerciseId || !student.id) return;
-
-    const unsubscribe = subscribeStudentProgress(
-      student.id,
-      selectedExerciseId,
-      (progress) => {
-        if (progress) {
-          if (progress.codigo && progress.codigo !== codeMirrorInstanceRef.current?.getValue()) {
-            setCode(progress.codigo);
-            if (codeMirrorInstanceRef.current) {
-              codeMirrorInstanceRef.current.setValue(progress.codigo);
-            }
-          }
-          setRunCount(progress.quantidadeExecucoes || 0);
-          setTypingTime(progress.tempoDigitando || 0);
-          setTotalEditingTime(progress.tempoTotalEdicao || 0);
-          setStudentState(progress.statusAluno || "Inativo");
-          setHistoryList(progress.historico || []);
-          if (progress.ultimaAtualizacao) {
-            setLastSavedTime(new Date(progress.ultimaAtualizacao).toLocaleTimeString());
-          }
-        } else {
-          // Clear and load template code
-          const template = `print("Olá, CodeTracker ETE!")\n\n# Atividade: ${activeExercise?.title || ""}\n# Escreva seu código aqui\n`;
-          setCode(template);
-          if (codeMirrorInstanceRef.current) {
-            codeMirrorInstanceRef.current.setValue(template);
-          }
-          setRunCount(0);
-          setTypingTime(0);
-          setTotalEditingTime(0);
-          setStudentState("Inativo");
-          setHistoryList([]);
-          setLastSavedTime("");
-        }
-      }
-    );
-
-    return () => unsubscribe();
+    // Logic removed or adapted as per instructions
   }, [selectedExerciseId, student.id, activeExercise?.id]);
 
   // Load Pyodide
@@ -247,24 +217,10 @@ sys.stderr = stderr
       const currentCode = codeMirrorInstanceRef.current?.getValue() || code;
       const lines = currentCode.split("\n").length;
 
-      // If code has actually changed, save to Firestore
+      // If code has actually changed, save to backend
       if (currentCode !== lastSavedCode) {
         setLastSavedCode(currentCode);
-        saveStudentProgressFirestore(
-          student.id,
-          selectedExerciseId,
-          student.name,
-          currentClassId,
-          {
-            codigo: currentCode,
-            statusAluno: studentState,
-            linhasCodigo: lines,
-            tempoDigitando: typingTime,
-            tempoTotalEdicao: totalEditingTime,
-            cursor: cursorPosition,
-            quantidadeExecucoes: runCount
-          }
-        ).then(() => {
+        salvarCodigoPorExercicio(selectedExerciseId, currentCode).then(() => {
           setLastSavedTime(new Date().toLocaleTimeString());
         });
       }
@@ -316,17 +272,20 @@ sys.stderr = stderr
   const updateFirebaseStatus = async (status: "Digitando" | "Executando" | "Inativo" | "Offline" | "Concluído") => {
     if (!selectedExerciseId) return;
     const currentCode = codeMirrorInstanceRef.current?.getValue() || code;
-    await saveStudentProgressFirestore(
-      student.id,
-      selectedExerciseId,
-      student.name,
-      currentClassId,
-      {
-        statusAluno: status,
-        codigo: currentCode,
-        linhasCodigo: currentCode.split("\n").length
-      }
-    );
+    
+    let estado_atual = "Codificando";
+    if (status === "Inativo" || status === "Offline") estado_atual = "Pausado";
+    if (status === "Concluído") estado_atual = "Concluído";
+
+    try {
+      await atualizarStatusPorExercicio({
+        exercicio_id: selectedExerciseId,
+        estado_atual
+      });
+      await salvarCodigoPorExercicio(selectedExerciseId, currentCode);
+    } catch (e) {
+      console.error("Erro ao salvar progresso", e);
+    }
   };
 
   // Trigger Run Python Code via Pyodide
@@ -377,20 +336,7 @@ stderr.seek(0)
       const nextRunCount = runCount + 1;
       setRunCount(nextRunCount);
 
-      // Save output/execution state to Firestore
-      saveStudentProgressFirestore(
-        student.id,
-        selectedExerciseId,
-        student.name,
-        currentClassId,
-        {
-          statusAluno: "Digitando",
-          quantidadeExecucoes: nextRunCount,
-          ultimaExecucao: new Date().toISOString(),
-          codigo: currentCode,
-          linhasCodigo: lines
-        }
-      );
+      await updateFirebaseStatus("Digitando");
       setStudentState("Digitando");
 
     } catch (err: any) {
@@ -403,20 +349,7 @@ stderr.seek(0)
       const nextRunCount = runCount + 1;
       setRunCount(nextRunCount);
 
-      // Save error execution state to Firestore
-      saveStudentProgressFirestore(
-        student.id,
-        selectedExerciseId,
-        student.name,
-        currentClassId,
-        {
-          statusAluno: "Digitando",
-          quantidadeExecucoes: nextRunCount,
-          ultimaExecucao: new Date().toISOString(),
-          codigo: currentCode,
-          linhasCodigo: lines
-        }
-      );
+      await updateFirebaseStatus("Digitando");
       setStudentState("Digitando");
     } finally {
       setIsExecuting(false);
@@ -427,17 +360,7 @@ stderr.seek(0)
   const handleMarkAsCompleted = async () => {
     setStudentState("Concluído");
     const currentCode = codeMirrorInstanceRef.current?.getValue() || code;
-    await saveStudentProgressFirestore(
-      student.id,
-      selectedExerciseId,
-      student.name,
-      currentClassId,
-      {
-        statusAluno: "Concluído",
-        codigo: currentCode,
-        linhasCodigo: currentCode.split("\n").length
-      }
-    );
+    await updateFirebaseStatus("Concluído");
     if (onStatusUpdateTrigger) {
       onStatusUpdateTrigger();
     }
@@ -469,8 +392,8 @@ stderr.seek(0)
     const currentLines = currentCode.split("\n").length;
     const currentChars = currentCode.length;
 
-    const diffLines = currentLines - version.linhas;
-    const diffChars = currentChars - version.caracteres;
+    const diffLines = currentLines - (version.linhasCodigo || version.codigo.split("\n").length);
+    const diffChars = currentChars - version.codigo.length;
 
     return {
       diffLines: diffLines > 0 ? `+${diffLines} linhas` : `${diffLines} linhas`,
@@ -789,7 +712,7 @@ stderr.seek(0)
                           </span>
                         </div>
                         <div className="flex justify-between items-center text-[10px] text-slate-500">
-                          <span>{ver.linhas} linhas • {ver.caracteres} chars</span>
+                          <span>{ver.linhasCodigo || ver.codigo.split("\n").length} linhas • {ver.codigo.length} chars</span>
                         </div>
                         <div className="text-[9px] flex justify-between font-mono text-slate-400 mt-0.5">
                           <span>{diff.diffLines}</span>
@@ -854,7 +777,7 @@ stderr.seek(0)
       )}
 
       {/* AI Tutor Chat Widget */}
-      <AITutorChat exercicioId={exercise.id} codigoAtual={currentCode} />
+      <AITutorChat exercicioId={selectedExerciseId} codigoAtual={code} />
     </div>
   );
 }
