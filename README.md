@@ -68,8 +68,12 @@ O seu projeto já possui um arquivo Infrastructure as Code (`render.yaml`) pront
 4. Preencha as Variáveis de Ambiente Necessárias (Values):
    - `DATABASE_URL`: Cole a URL de conexão do Neon (Passo 2).
    - `GEMINI_API_KEY`: A chave da API do Google Gemini.
-   - Variáveis de Auth (se utilizar): `NEON_AUTH_SECRET`, `NEON_AUTH_JWKS_URL`, `NEON_AUTH_PROJECT_ID`, `VITE_NEON_AUTH_PROJECT_ID`, `VITE_NEON_AUTH_PUBLISHABLE_KEY`.
-   - `VITE_API_URL`: A URL final que seu app terá no Render.
+   - **Variáveis de Autenticação (Neon Auth)**: Para obter essas chaves, vá no painel do Neon, abra seu projeto e clique na aba **"Authentication"** (Autenticação) no menu lateral:
+     - `NEON_AUTH_PROJECT_ID`: O ID do seu projeto de autenticação (mesmo valor para o `VITE_NEON_AUTH_PROJECT_ID`).
+     - `NEON_AUTH_SECRET`: A Secret Key gerada para o backend.
+     - `VITE_NEON_AUTH_PUBLISHABLE_KEY`: A Publishable Key pública gerada para o frontend.
+     - `NEON_AUTH_JWKS_URL`: A URL JWKS (geralmente `https://api.stack-auth.com/api/v1/projects/SEU_PROJECT_ID/.well-known/jwks.json`).
+   - `VITE_API_URL`: A URL final que seu app terá no Render (ex: `https://codetracker-ete.onrender.com`).
 5. Clique em **Apply** / **Create Blueprint**.
 
 ### Passo 4: Acompanhar o Deploy (Build e Inicialização)
