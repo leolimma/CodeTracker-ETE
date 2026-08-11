@@ -16,6 +16,8 @@ services:
     envVars:
       - key: FLASK_ENV
         value: production
+      - key: PYTHON_VERSION
+        value: "3.11.9"
       - key: DATABASE_URL
         sync: false  # Definir manualmente no dashboard Render
       - key: NEON_AUTH_SECRET
