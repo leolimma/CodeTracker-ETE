@@ -1,15 +1,23 @@
 -- ============================================================
--- CodeTracker ETE — Schema PostgreSQL Inicial
--- Migração: SQLite + JSON File → Neon PostgreSQL
+-- CodeTracker ETE — Schema PostgreSQL Completo (CREATE)
 -- Versão: 001
+-- Inclui: Extensões, Tabelas, Índices, Triggers e Views
 -- ============================================================
 
--- Extensões necessárias
+-- 0. Tabela de Controle de Versão de Migrações
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version     TEXT PRIMARY KEY,
+    applied_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ============================================================
+-- 1. Extensões PostgreSQL
+-- ============================================================
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pg_trgm";
 
 -- ============================================================
--- DOMÍNIO ACADÊMICO
+-- 2. Domínio Acadêmico
 -- ============================================================
 
 -- Tabela: turmas
@@ -29,30 +37,33 @@ CREATE TABLE IF NOT EXISTS professores (
   usuario       TEXT UNIQUE NOT NULL,
   email         TEXT UNIQUE NOT NULL,
   nome          TEXT NOT NULL DEFAULT '',
-  auth_user_id  TEXT UNIQUE,  -- ID do usuário no Neon Auth
+  senha_hash    TEXT,
+  auth_user_id  TEXT UNIQUE,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_professores_auth_user_id ON professores(auth_user_id);
+CREATE INDEX IF NOT EXISTS idx_professores_email ON professores(email);
 
 -- Tabela: alunos
 CREATE TABLE IF NOT EXISTS alunos (
   id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   nome             TEXT NOT NULL,
   matricula        TEXT UNIQUE NOT NULL,
-  email            TEXT UNIQUE NOT NULL,  -- {matricula}@ete.edu.br
+  email            TEXT UNIQUE NOT NULL,
   foto             TEXT,
   turma_id         UUID NOT NULL REFERENCES turmas(id) ON DELETE CASCADE,
-  auth_user_id     TEXT UNIQUE,           -- ID do usuário no Neon Auth
+  senha_hash       TEXT,
+  auth_user_id     TEXT UNIQUE,
   primeiro_acesso  BOOLEAN NOT NULL DEFAULT TRUE,
   metadata         JSONB DEFAULT '{}',
   created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS idx_alunos_turma_id    ON alunos(turma_id);
-CREATE INDEX IF NOT EXISTS idx_alunos_email       ON alunos(email);
+CREATE INDEX IF NOT EXISTS idx_alunos_turma_id     ON alunos(turma_id);
+CREATE INDEX IF NOT EXISTS idx_alunos_email        ON alunos(email);
 CREATE INDEX IF NOT EXISTS idx_alunos_auth_user_id ON alunos(auth_user_id);
-CREATE INDEX IF NOT EXISTS idx_alunos_matricula   ON alunos(matricula);
+CREATE INDEX IF NOT EXISTS idx_alunos_matricula    ON alunos(matricula);
 
 -- Tabela: exercicios
 CREATE TABLE IF NOT EXISTS exercicios (
@@ -81,17 +92,17 @@ CREATE TABLE IF NOT EXISTS exercicios (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS idx_exercicios_fts  ON exercicios USING GIN(search_vector);
+CREATE INDEX IF NOT EXISTS idx_exercicios_fts   ON exercicios USING GIN(search_vector);
 CREATE INDEX IF NOT EXISTS idx_exercicios_ativo ON exercicios(ativo);
 
--- Tabela: exercício ativo por turma (ex: activeExerciseId do Node.js)
+-- Tabela: exercício ativo por turma
 CREATE TABLE IF NOT EXISTS turmas_exercicio_ativo (
   turma_id      UUID PRIMARY KEY REFERENCES turmas(id) ON DELETE CASCADE,
   exercicio_id  UUID REFERENCES exercicios(id) ON DELETE SET NULL,
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Tabela: status_atividades (uma linha por aluno × exercício)
+-- Tabela: status_atividades
 CREATE TABLE IF NOT EXISTS status_atividades (
   id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   aluno_id      UUID NOT NULL REFERENCES alunos(id) ON DELETE CASCADE,
@@ -99,11 +110,11 @@ CREATE TABLE IF NOT EXISTS status_atividades (
   estado_atual  TEXT NOT NULL DEFAULT 'Não Iniciado'
     CHECK (estado_atual IN ('Não Iniciado', 'Codificando', 'Preciso de Ajuda', 'Pausado', 'Concluído')),
   progresso     INTEGER NOT NULL DEFAULT 0 CHECK (progresso BETWEEN 0 AND 100),
-  codigo_salvo  TEXT,                -- código Python salvo pelo aluno
+  codigo_salvo  TEXT,
   tempo_inicio  TIMESTAMPTZ,
   tempo_fim     TIMESTAMPTZ,
   observacao    TEXT,
-  nota          NUMERIC(4,1),        -- nota do professor (0.0 a 10.0)
+  nota          NUMERIC(4,1),
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE(aluno_id, exercicio_id)
@@ -112,7 +123,7 @@ CREATE INDEX IF NOT EXISTS idx_status_aluno     ON status_atividades(aluno_id);
 CREATE INDEX IF NOT EXISTS idx_status_exercicio ON status_atividades(exercicio_id);
 CREATE INDEX IF NOT EXISTS idx_status_estado    ON status_atividades(estado_atual);
 
--- Tabela: historico_status (log imutável de todas as transições de estado)
+-- Tabela: historico_status
 CREATE TABLE IF NOT EXISTS historico_status (
   id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   aluno_id        UUID NOT NULL REFERENCES alunos(id) ON DELETE CASCADE,
@@ -120,7 +131,7 @@ CREATE TABLE IF NOT EXISTS historico_status (
   estado_anterior TEXT,
   estado_novo     TEXT NOT NULL,
   progresso       INTEGER NOT NULL DEFAULT 0,
-  tempo_decorrido INTEGER,  -- segundos desde tempo_inicio até esta transição
+  tempo_decorrido INTEGER,
   observacao      TEXT,
   timestamp       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -129,23 +140,19 @@ CREATE INDEX IF NOT EXISTS idx_historico_exercicio ON historico_status(exercicio
 CREATE INDEX IF NOT EXISTS idx_historico_timestamp ON historico_status(timestamp DESC);
 
 -- ============================================================
--- AUTENTICAÇÃO E RBAC
+-- 3. Autenticação e RBAC
 -- ============================================================
-
--- Tabela: papéis de usuário (vincula Neon Auth user ID ao papel e entidade)
 CREATE TABLE IF NOT EXISTS user_roles (
   auth_user_id  TEXT PRIMARY KEY,
   role          TEXT NOT NULL CHECK (role IN ('admin', 'professor', 'aluno')),
-  entity_id     UUID,   -- FK para alunos.id ou professores.id dependendo do role
+  entity_id     UUID,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- ============================================================
--- LOGS E AUDITORIA
+-- 4. Logs e Auditoria
 -- ============================================================
-
--- Tabela: logs de auditoria completos
 CREATE TABLE IF NOT EXISTS audit_logs (
   id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   auth_user_id  TEXT,
@@ -159,7 +166,6 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_logs(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_user_type ON audit_logs(user_type);
 
--- Tabela: logs de status simplificados (feed ao vivo)
 CREATE TABLE IF NOT EXISTS logs_status (
   id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   aluno_id      UUID REFERENCES alunos(id) ON DELETE SET NULL,
@@ -171,10 +177,8 @@ CREATE TABLE IF NOT EXISTS logs_status (
 CREATE INDEX IF NOT EXISTS idx_logs_status_timestamp ON logs_status(timestamp DESC);
 
 -- ============================================================
--- VIEWS CONSOLIDADAS
+-- 5. Views
 -- ============================================================
-
--- View: visão completa das atividades para o professor
 CREATE OR REPLACE VIEW vw_atividades_professor AS
 SELECT
   sa.id,
@@ -206,7 +210,6 @@ JOIN alunos   a ON sa.aluno_id      = a.id
 JOIN turmas   t ON a.turma_id       = t.id
 JOIN exercicios e ON sa.exercicio_id = e.id;
 
--- View: estatísticas por turma e exercício
 CREATE OR REPLACE VIEW vw_stats_turma AS
 SELECT
   t.id                                           AS turma_id,
@@ -228,7 +231,7 @@ JOIN exercicios e ON sa.exercicio_id = e.id
 GROUP BY t.id, t.nome, e.id, e.titulo;
 
 -- ============================================================
--- FUNÇÃO: atualizar updated_at automaticamente
+-- 6. Função e Triggers de Atualização Automática
 -- ============================================================
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
@@ -238,7 +241,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Triggers para updated_at
 CREATE OR REPLACE TRIGGER trg_turmas_updated_at
   BEFORE UPDATE ON turmas
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
@@ -262,3 +264,10 @@ CREATE OR REPLACE TRIGGER trg_status_atividades_updated_at
 CREATE OR REPLACE TRIGGER trg_user_roles_updated_at
   BEFORE UPDATE ON user_roles
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ============================================================
+-- 7. Registro no Controle de Versão
+-- ============================================================
+INSERT INTO schema_migrations (version) 
+VALUES ('001_initial_schema') 
+ON CONFLICT (version) DO NOTHING;

@@ -1,86 +1,59 @@
 /**
- * neonAuth.ts
- * -----------
- * Serviço de autenticação usando Neon Auth (Stack Auth SDK).
- * Substitui firebase.ts + firebaseAuth.ts.
- *
- * Instalação:
- *   npm install @stackframe/stack
+ * neonAuth.ts (Autenticação Nativa do CodeTracker ETE)
+ * -----------------------------------------------------
+ * Gerenciamento de sessão e tokens JWT via API Flask local
+ * com senhas criptografadas no Neon PostgreSQL.
  */
 
-import { StackClientApp } from "@stackframe/stack";
+export type { AuthUser } from "../types";
 
-// ─────────────────────────────────────────────
-// Configuração do Neon Auth (Stack Auth)
-// ─────────────────────────────────────────────
-const NEON_AUTH_PROJECT_ID = import.meta.env.VITE_NEON_AUTH_PROJECT_ID || "";
-const NEON_AUTH_PUBLISHABLE_KEY = import.meta.env.VITE_NEON_AUTH_PUBLISHABLE_KEY || "";
-
-// Instância singleton do Stack Auth Client
-let _stackApp: StackClientApp<true> | null = null;
-
-export function getStackApp(): StackClientApp<true> {
-  if (!_stackApp) {
-    if (!NEON_AUTH_PROJECT_ID || !NEON_AUTH_PUBLISHABLE_KEY) {
-      throw new Error(
-        "VITE_NEON_AUTH_PROJECT_ID e VITE_NEON_AUTH_PUBLISHABLE_KEY não configurados. " +
-        "Verifique o arquivo .env."
-      );
-    }
-    _stackApp = new StackClientApp({
-      tokenStore: "nextjs-cookie", // usa cookie HTTP-only por padrão
-      // Para SPAs sem Next.js, use:
-      // tokenStore: "cookie",
-      projectId: NEON_AUTH_PROJECT_ID,
-      publishableClientKey: NEON_AUTH_PUBLISHABLE_KEY,
-      urls: {
-        home: "/",
-        signIn: "/login",
-        afterSignIn: "/",
-        afterSignOut: "/login",
-      },
-    });
-  }
-  return _stackApp;
-}
-
-// ─────────────────────────────────────────────
-// Funções de Autenticação
-// ─────────────────────────────────────────────
+const TOKEN_KEY = "codetracker_auth_token";
+const USER_KEY = "codetracker_auth_user";
 
 /**
- * Faz login com email e senha via Neon Auth.
+ * Faz login com email/matrícula e senha via API Flask do CodeTracker.
  * Retorna o token de acesso JWT em caso de sucesso.
  */
 export async function signInWithEmailPassword(
-  email: string,
+  identifier: string,
   password: string
-): Promise<{ accessToken: string; userId: string }> {
-  const app = getStackApp();
-  const result = await app.signInWithCredential({ email, password });
+): Promise<{ accessToken: string; userId: string; user?: any }> {
+  const response = await fetch("/api/auth/login", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ identifier, password }),
+  });
 
-  if (result.status === "error") {
-    throw new Error(result.error?.message || "Credenciais inválidas.");
+  const data = await response.json();
+
+  if (!response.ok || !data.success) {
+    throw new Error(data.error || "Credenciais inválidas. Verifique usuário/matrícula e senha.");
   }
 
-  const user = await app.getUser();
-  if (!user) throw new Error("Falha ao obter dados do usuário após login.");
+  const token = data.token;
+  localStorage.setItem(TOKEN_KEY, token);
+  localStorage.setItem(USER_KEY, JSON.stringify(data.user));
 
-  const token = await user.getAuthJson();
-  const accessToken = token?.accessToken || "";
-
-  return { accessToken, userId: user.id };
+  return {
+    accessToken: token,
+    userId: data.user.id,
+    user: data.user,
+  };
 }
 
 /**
- * Faz logout do usuário atual.
+ * Faz logout do usuário atual limpando os tokens locais.
  */
 export async function signOut(): Promise<void> {
-  const app = getStackApp();
-  const user = await app.getUser();
-  if (user) {
-    await user.signOut();
+  try {
+    await fetch("/api/auth/logout", { method: "POST" });
+  } catch {
+    // Continua mesmo se a rede falhar
   }
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(USER_KEY);
 }
 
 /**
@@ -88,34 +61,26 @@ export async function signOut(): Promise<void> {
  * Retorna null se não há usuário logado.
  */
 export async function getAccessToken(): Promise<string | null> {
-  try {
-    const app = getStackApp();
-    const user = await app.getUser();
-    if (!user) return null;
-    const authJson = await user.getAuthJson();
-    return authJson?.accessToken || null;
-  } catch {
-    return null;
-  }
+  return localStorage.getItem(TOKEN_KEY);
 }
 
 /**
- * Obtém o usuário atual (sem informações de role — role vem da API Flask).
- * Retorna null se não há usuário logado.
+ * Obtém o usuário atual salvo na sessão local.
  */
 export async function getCurrentUser(): Promise<{
   id: string;
   email: string;
   displayName: string;
 } | null> {
+  const userJson = localStorage.getItem(USER_KEY);
+  if (!userJson) return null;
+
   try {
-    const app = getStackApp();
-    const user = await app.getUser();
-    if (!user) return null;
+    const u = JSON.parse(userJson);
     return {
-      id: user.id,
-      email: user.primaryEmail || "",
-      displayName: user.displayName || user.primaryEmail || "",
+      id: u.id,
+      email: u.email || "",
+      displayName: u.displayName || u.name || u.email || "",
     };
   } catch {
     return null;
@@ -123,23 +88,41 @@ export async function getCurrentUser(): Promise<{
 }
 
 /**
- * Altera a senha do usuário logado (para alunos no primeiro acesso).
+ * Altera a senha do usuário logado diretamente no banco.
  */
 export async function changePassword(
   oldPassword: string,
   newPassword: string
 ): Promise<void> {
-  const app = getStackApp();
-  const user = await app.getUser();
-  if (!user) throw new Error("Usuário não autenticado.");
+  const token = await getAccessToken();
+  const response = await fetch("/api/auth/alterar-senha", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({
+      old_password: oldPassword,
+      new_password: newPassword,
+    }),
+  });
 
-  // Stack Auth: usar updatePassword
-  await (user as any).updatePassword({ oldPassword, newPassword });
+  const data = await response.json();
+  if (!response.ok || !data.success) {
+    throw new Error(data.error || "Falha ao alterar senha.");
+  }
 }
 
 /**
- * Verifica se o Neon Auth está configurado corretamente.
+ * Verifica se a autenticação está ativa (sempre true no modo nativo).
  */
 export function isNeonAuthConfigured(): boolean {
-  return !!(NEON_AUTH_PROJECT_ID && NEON_AUTH_PUBLISHABLE_KEY);
+  return true;
+}
+
+/**
+ * Stub de compatibilidade legado caso seja chamado em algum componente.
+ */
+export function getStackApp(): any {
+  return null;
 }

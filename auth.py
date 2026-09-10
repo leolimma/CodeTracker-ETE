@@ -1,62 +1,59 @@
 import os
+import datetime
 import jwt
-import requests
 from functools import wraps
 from flask import request, jsonify, g
 from dotenv import load_dotenv
+from werkzeug.security import generate_password_hash, check_password_hash
 
 load_dotenv()
 
-NEON_AUTH_JWKS_URL = os.environ.get(
-    "NEON_AUTH_JWKS_URL",
-    "https://api.stack-auth.com/api/v1/projects/{}/well-known/jwks.json".format(
-        os.environ.get("NEON_AUTH_PROJECT_ID", "")
-    )
-)
-
-# Cache simples da chave pública JWKS
-_jwks_cache: dict | None = None
+SESSION_SECRET = os.environ.get("SESSION_SECRET", "codetracker-ete-super-secret-key-2026-fallback")
 
 
-def _get_jwks() -> dict:
-    """Obtém as chaves públicas JWKS do Neon Auth (com cache simples)."""
-    global _jwks_cache
-    if _jwks_cache is None:
-        try:
-            resp = requests.get(NEON_AUTH_JWKS_URL, timeout=5)
-            resp.raise_for_status()
-            _jwks_cache = resp.json()
-        except Exception as e:
-            raise RuntimeError(f"Falha ao obter JWKS: {e}")
-    return _jwks_cache
+# ─────────────────────────────────────────────
+# Criptografia de Senhas (scrypt / pbkdf2)
+# ─────────────────────────────────────────────
+def hash_password(password: str) -> str:
+    """Gera hash seguro para a senha fornecida."""
+    return generate_password_hash(password)
+
+
+def verify_password(plain_password: str, hashed_password: str | None) -> bool:
+    """Verifica se a senha em texto puro confere com o hash armazenado."""
+    if not hashed_password or not plain_password:
+        return False
+    return check_password_hash(hashed_password, plain_password)
+
+
+# ─────────────────────────────────────────────
+# Tokens JWT Locais (HS256)
+# ─────────────────────────────────────────────
+def create_access_token(
+    user_id: str,
+    role: str,
+    email: str,
+    name: str = "",
+    entity_id: str | None = None,
+    expires_in_days: int = 7
+) -> str:
+    """Gera um token de acesso JWT assinado com SESSION_SECRET."""
+    now = datetime.datetime.now(datetime.timezone.utc)
+    payload = {
+        "sub": str(user_id),
+        "role": role,
+        "email": email,
+        "name": name,
+        "entity_id": str(entity_id) if entity_id else None,
+        "iat": now,
+        "exp": now + datetime.timedelta(days=expires_in_days)
+    }
+    return jwt.encode(payload, SESSION_SECRET, algorithm="HS256")
 
 
 def decode_jwt(token: str) -> dict:
-    """
-    Decodifica e valida um JWT do Neon Auth usando as chaves JWKS públicas.
-    Retorna o payload do token ou lança exceção em caso de erro.
-    """
-    jwks = _get_jwks()
-    public_keys = {}
-    for key_data in jwks.get("keys", []):
-        kid = key_data.get("kid")
-        if kid:
-            public_keys[kid] = jwt.algorithms.RSAAlgorithm.from_jwk(key_data)
-
-    # Decodificar o header para obter o kid
-    header = jwt.get_unverified_header(token)
-    kid = header.get("kid")
-    if not kid or kid not in public_keys:
-        raise jwt.InvalidTokenError("kid não encontrado nas chaves JWKS")
-
-    public_key = public_keys[kid]
-    payload = jwt.decode(
-        token,
-        public_key,
-        algorithms=["RS256"],
-        options={"verify_exp": True}
-    )
-    return payload
+    """Decodifica e valida o token JWT usando SESSION_SECRET."""
+    return jwt.decode(token, SESSION_SECRET, algorithms=["HS256"])
 
 
 def get_current_user() -> dict | None:
@@ -67,7 +64,7 @@ def get_current_user() -> dict | None:
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
         return None
-    token = auth_header[7:]
+    token = auth_header[7:].strip()
     try:
         payload = decode_jwt(token)
         return payload
@@ -75,6 +72,9 @@ def get_current_user() -> dict | None:
         return None
 
 
+# ─────────────────────────────────────────────
+# Decorador de Proteção de Rotas (RBAC)
+# ─────────────────────────────────────────────
 def require_auth(*roles: str):
     """
     Decorador que protege uma rota Flask exigindo autenticação JWT.
@@ -90,28 +90,31 @@ def require_auth(*roles: str):
         def decorated_function(*args, **kwargs):
             payload = get_current_user()
             if payload is None:
-                return jsonify({"success": False, "error": "Não autenticado. Token JWT inválido ou ausente."}), 401
+                return jsonify({"success": False, "error": "Não autenticado. Token JWT inválido ou expirado."}), 401
 
-            # O Neon Auth coloca o user ID em 'sub'
             auth_user_id = payload.get("sub")
             if not auth_user_id:
-                return jsonify({"success": False, "error": "Token inválido: sem sub"}), 401
+                return jsonify({"success": False, "error": "Token inválido: sem identificador de usuário."}), 401
 
-            # Buscar role do usuário no banco
-            from database import get_db_connection
-            with get_db_connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        "SELECT role, entity_id FROM user_roles WHERE auth_user_id = %s",
-                        (auth_user_id,)
-                    )
-                    row = cur.fetchone()
+            user_role = payload.get("role")
+            entity_id = payload.get("entity_id")
 
-            if not row:
+            # Se o token não tiver o papel gravado, consulta o banco de dados
+            if not user_role:
+                from database import get_db_connection
+                with get_db_connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "SELECT role, entity_id FROM user_roles WHERE auth_user_id = %s",
+                            (auth_user_id,)
+                        )
+                        row = cur.fetchone()
+                        if row:
+                            user_role = row["role"] if isinstance(row, dict) else row[0]
+                            entity_id = row["entity_id"] if isinstance(row, dict) else row[1]
+
+            if not user_role:
                 return jsonify({"success": False, "error": "Usuário sem papel atribuído. Contate o administrador."}), 403
-
-            user_role = row[0]
-            entity_id = row[1]
 
             # Verificar se o papel é permitido
             if roles and user_role not in roles:
@@ -124,6 +127,8 @@ def require_auth(*roles: str):
             g.auth_user_id = auth_user_id
             g.user_role = user_role
             g.entity_id = entity_id
+            g.email = payload.get("email")
+            g.user_name = payload.get("name")
 
             return f(*args, **kwargs)
         return decorated_function

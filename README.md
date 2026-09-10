@@ -56,44 +56,33 @@ O servidor puxará o seu código diretamente do GitHub.
 
 O [Neon](https://neon.tech/) fornece um banco PostgreSQL serverless rápido e escalável.
 1. Acesse o Neon e crie um **New Project**.
-2. Escolha o nome e região, e crie o projeto.
-3. Copie a **Connection String** (`postgres://...`). Ela será sua variável `DATABASE_URL` no Render.
+2. Copie a **Connection String** (`postgresql://...`). Ela será sua variável `DATABASE_URL` no Render.
+3. No menu lateral do Neon, clique em **SQL Editor**:
+   - Copie e execute o arquivo [`migrations/001_initial_schema.sql`](migrations/001_initial_schema.sql) para criar as tabelas.
+   - Copie e execute o arquivo [`migrations/002_seed_data.sql`](migrations/002_seed_data.sql) para carregar os dados iniciais e o usuário administrador (`admin@ete.edu.br` / `admin123`).
 
 ### Passo 3: Configurar a Hospedagem no Render
 
-O seu projeto já possui um arquivo Infrastructure as Code (`render.yaml`) pronto para facilitar e automatizar o processo.
-1. Acesse o [Render](https://render.com/) e crie uma conta usando seu GitHub.
+O seu projeto já possui um arquivo Infrastructure as Code (`render.yaml`) pronto para automatizar o processo.
+1. Acesse o [Render](https://render.com/) e faça login com seu GitHub.
 2. No Dashboard, clique em **New** e selecione **Blueprint**.
-3. Selecione o repositório que você conectou. O Render lerá seu `render.yaml` automaticamente.
-4. Preencha as Variáveis de Ambiente Necessárias (Values):
-   - `DATABASE_URL`: Cole a URL de conexão do Neon (Passo 2).
-   - `GEMINI_API_KEY`: A chave da API do Google Gemini.
-   - **Variáveis de Autenticação (Neon Auth)**: Para obter essas chaves, vá no painel do Neon, abra seu projeto e clique na aba **"Authentication"** (Autenticação) no menu lateral:
-     - `NEON_AUTH_PROJECT_ID`: O ID do seu projeto de autenticação (mesmo valor para o `VITE_NEON_AUTH_PROJECT_ID`).
-     - `NEON_AUTH_SECRET`: A Secret Key gerada para o backend.
-     - `VITE_NEON_AUTH_PUBLISHABLE_KEY`: A Publishable Key pública gerada para o frontend.
-     - `NEON_AUTH_JWKS_URL`: A URL JWKS (geralmente `https://api.stack-auth.com/api/v1/projects/SEU_PROJECT_ID/.well-known/jwks.json`).
-   - `VITE_API_URL`: A URL final que seu app terá no Render (ex: `https://codetracker-ete.onrender.com`).
+3. Selecione o repositório do projeto. O Render lerá seu `render.yaml` automaticamente.
+4. Preencha as Variáveis de Ambiente Necessárias:
+   - `DATABASE_URL`: Cole a URL de conexão do Neon (com `?sslmode=require`).
+   - `GEMINI_API_KEY`: Sua chave de API do Google Gemini (se for utilizar o tutor IA).
+   - `VITE_API_URL`: A URL final do seu app no Render (ex: `https://codetracker-ete.onrender.com`).
+   - `SESSION_SECRET`: *(Gerado automaticamente pelo Render)*.
 5. Clique em **Apply** / **Create Blueprint**.
 
-### Passo 4: Acompanhar o Deploy (Build e Inicialização)
+### Passo 4: Acompanhar o Deploy
 
-1. O Render iniciará o primeiro Deploy automaticamente. Ele executará os passos definidos no script `build.sh`:
-   - `npm install` (Instalação das libs Node)
-   - `npm run build` (Compilação do app React)
-   - `pip install -r requirements.txt` (Instalação das libs Python)
+1. O Render iniciará o Deploy automaticamente executando o `build.sh`:
+   - `npm install`
+   - `npm run build`
+   - `pip install -r requirements.txt`
 2. Após o build, o Gunicorn iniciará sua aplicação Flask servindo tudo (arquivos React e API).
-3. Se tudo ocorrer bem, seu site estará online!
-
-### Passo 5: Migrações do Banco de Dados (Pós-Deploy)
-
-Como o banco no Neon está limpo, você precisa criar as tabelas.
-1. No dashboard do Render, abra o serviço web criado e vá até a aba **Shell**.
-2. Rode o script de migrações:
-   ```bash
-   python scripts/run_migrations.py
-   ```
-*(Verifique se as tabelas apareceram no painel do Neon, na aba "Tables").*
+3. Quando o status mudar para **Live**, seu site estará online e pronto para uso!
+   - Login do Admin: `admin@ete.edu.br` | Senha: `admin123`
 
 ---
 

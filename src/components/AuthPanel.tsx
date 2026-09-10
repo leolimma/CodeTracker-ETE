@@ -38,26 +38,17 @@ export default function AuthPanel({ onUserLoginChange }: AuthPanelProps) {
     setIsLoading(true);
 
     try {
-      // Usa o Stack Auth SDK para fazer login
       const result = await signInWithEmailPassword(email.trim(), password);
       
-      // O role não vem direto do Stack Auth, ele será resolvido no App.tsx ou na API
-      // Mas para onUserLoginChange, passamos o mínimo e o App.tsx busca os detalhes
-      // ou passamos um AuthUser parcial e o App lida com isso.
-      // O ideal é a API Flask resolver isso ao batermos no /api/aluno/dados ou algo assim.
-      // Como a gente precisa do role para navegar, podemos bater no /api/usuarios ou /api/aluno/dados.
-      // Vamos assumir que a decodificação no backend vai dizer se é aluno, admin ou professor.
-      
-      // Como simplificação aqui, emitimos um AuthUser parcial
-      // App.tsx será responsável por buscar o perfil completo na API.
-      onUserLoginChange({
+      const user = result.user || {
         id: result.userId,
         email: email.trim(),
         displayName: email.trim(),
-        role: "aluno", // Default provisório, App.tsx vai atualizar
+        role: "aluno",
         entityId: null
-      } as AuthUser);
+      };
       
+      onUserLoginChange(user as AuthUser);
       setAuthSuccess("Login realizado com sucesso!");
       setShowAuthModal(false);
     } catch (err: any) {
@@ -202,7 +193,7 @@ export default function AuthPanel({ onUserLoginChange }: AuthPanelProps) {
                 <Terminal className="w-5 h-5 text-orange-400" />
                 <h3 className="text-lg font-black tracking-tight">CodeTracker ETE</h3>
               </div>
-              <p className="text-xs text-white/85 mt-1">Acesso à plataforma (Neon Auth)</p>
+              <p className="text-xs text-white/85 mt-1">Acesso à plataforma</p>
             </div>
 
             <div className="p-6 space-y-4">

@@ -7,11 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "lint": "tsc --noEmit",
-    "db:migrate": "python scripts/run_migrations.py",
-    "db:migrate-data": "python scripts/migrate_sqlite_to_neon.py",
-    "db:validate": "python scripts/validate_migration.py",
-    "auth:create-users": "python scripts/create_neon_auth_users.py"
+    "lint": "tsc --noEmit"
   },
   "dependencies": {
     "@codemirror/lang-python": "^6.2.1",

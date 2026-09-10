@@ -21,7 +21,7 @@ from flask_limiter.util import get_remote_address
 from dotenv import load_dotenv
 
 from database import get_db_connection
-from auth import require_auth, get_current_user
+from auth import require_auth, get_current_user, create_access_token, hash_password, verify_password
 
 load_dotenv()
 
@@ -128,6 +128,153 @@ def health_check():
 
 
 # ─────────────────────────────────────────────
+# AUTENTICAÇÃO NATIVA (Login / Logout / Senha)
+# ─────────────────────────────────────────────
+@app.route("/api/auth/login", methods=["POST"])
+def auth_login():
+    """Autentica usuário (professor, admin ou aluno) direto no banco de dados."""
+    data = request.json or {}
+    identifier = (data.get("email") or data.get("identifier") or "").strip()
+    password = (data.get("password") or "").strip()
+
+    if not identifier or not password:
+        return jsonify({"success": False, "error": "E-mail/matrícula e senha são obrigatórios."}), 400
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            # 1. Tentar buscar em professores / admin
+            cur.execute("""
+                SELECT id, usuario, email, nome, senha_hash, auth_user_id
+                FROM professores
+                WHERE LOWER(email) = LOWER(%s) OR LOWER(usuario) = LOWER(%s)
+            """, (identifier, identifier))
+            prof = cur.fetchone()
+
+            if prof:
+                # Se for o admin e ainda não tiver hash salvo no banco, inicializa com admin123
+                if not prof.get("senha_hash"):
+                    if prof["email"] == "admin@ete.edu.br" or prof["usuario"] == "admin":
+                        if password == "admin123":
+                            novo_hash = hash_password("admin123")
+                            cur.execute("UPDATE professores SET senha_hash = %s WHERE id = %s", (novo_hash, prof["id"]))
+                            prof["senha_hash"] = novo_hash
+
+                if verify_password(password, prof.get("senha_hash")):
+                    # Determinar papel em user_roles
+                    cur.execute("""
+                        SELECT role FROM user_roles
+                        WHERE entity_id = %s OR auth_user_id = %s OR auth_user_id = %s
+                    """, (prof["id"], prof.get("auth_user_id"), prof["email"]))
+                    role_row = cur.fetchone()
+                    role = role_row["role"] if role_row else ("admin" if (prof["email"] == "admin@ete.edu.br" or prof["usuario"] == "admin") else "professor")
+
+                    token = create_access_token(
+                        user_id=prof.get("auth_user_id") or str(prof["id"]),
+                        role=role,
+                        email=prof["email"],
+                        name=prof["nome"] or prof["usuario"],
+                        entity_id=str(prof["id"])
+                    )
+                    add_audit_log(role, prof["nome"] or prof["usuario"], "Login", "Login realizado com sucesso.")
+                    return jsonify({
+                        "success": True,
+                        "token": token,
+                        "user": {
+                            "id": prof.get("auth_user_id") or str(prof["id"]),
+                            "email": prof["email"],
+                            "displayName": prof["nome"] or prof["usuario"],
+                            "role": role,
+                            "entityId": str(prof["id"])
+                        }
+                    })
+
+            # 2. Tentar buscar em alunos
+            cur.execute("""
+                SELECT id, nome, matricula, email, turma_id, senha_hash, primeiro_acesso
+                FROM alunos
+                WHERE LOWER(email) = LOWER(%s) OR UPPER(matricula) = UPPER(%s)
+            """, (identifier, identifier))
+            aluno = cur.fetchone()
+
+            if aluno:
+                is_valid = False
+                if aluno.get("senha_hash"):
+                    is_valid = verify_password(password, aluno["senha_hash"])
+                else:
+                    # Senha padrão do aluno é a própria matrícula
+                    if password.strip() == aluno["matricula"].strip():
+                        is_valid = True
+                        novo_hash = hash_password(password)
+                        cur.execute("UPDATE alunos SET senha_hash = %s WHERE id = %s", (novo_hash, aluno["id"]))
+
+                if is_valid:
+                    token = create_access_token(
+                        user_id=str(aluno["id"]),
+                        role="aluno",
+                        email=aluno["email"],
+                        name=aluno["nome"],
+                        entity_id=str(aluno["id"])
+                    )
+                    add_audit_log("aluno", aluno["nome"], "Login", f"Aluno {aluno['matricula']} logou no sistema.")
+                    return jsonify({
+                        "success": True,
+                        "token": token,
+                        "user": {
+                            "id": str(aluno["id"]),
+                            "email": aluno["email"],
+                            "displayName": aluno["nome"],
+                            "role": "aluno",
+                            "entityId": str(aluno["id"]),
+                            "turmaId": str(aluno["turma_id"]),
+                            "primeiroAcesso": aluno["primeiro_acesso"]
+                        }
+                    })
+
+    return jsonify({"success": False, "error": "Credenciais inválidas. Verifique seu e-mail/matrícula e senha."}), 401
+
+
+@app.route("/api/auth/alterar-senha", methods=["POST"])
+@require_auth()
+def auth_alterar_senha():
+    """Permite alterar a senha do usuário autenticado."""
+    data = request.json or {}
+    old_password = (data.get("old_password") or "").strip()
+    new_password = (data.get("new_password") or "").strip()
+
+    if not old_password or not new_password:
+        return jsonify({"success": False, "error": "Senha atual e nova senha são obrigatórias."}), 400
+
+    if len(new_password) < 6:
+        return jsonify({"success": False, "error": "A nova senha deve ter no mínimo 6 caracteres."}), 400
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            if g.user_role in ("admin", "professor"):
+                cur.execute("SELECT id, senha_hash FROM professores WHERE id = %s", (g.entity_id,))
+                user = cur.fetchone()
+                if not user or not verify_password(old_password, user.get("senha_hash")):
+                    return jsonify({"success": False, "error": "Senha atual incorreta."}), 400
+                cur.execute("UPDATE professores SET senha_hash = %s, updated_at = NOW() WHERE id = %s",
+                            (hash_password(new_password), g.entity_id))
+            else:
+                cur.execute("SELECT id, senha_hash, matricula FROM alunos WHERE id = %s", (g.entity_id,))
+                user = cur.fetchone()
+                current_hash = user.get("senha_hash") if user else None
+                valid = verify_password(old_password, current_hash) if current_hash else (old_password == user.get("matricula"))
+                if not user or not valid:
+                    return jsonify({"success": False, "error": "Senha atual incorreta."}), 400
+                cur.execute("UPDATE alunos SET senha_hash = %s, primeiro_acesso = FALSE, updated_at = NOW() WHERE id = %s",
+                            (hash_password(new_password), g.entity_id))
+
+    return jsonify({"success": True, "message": "Senha atualizada com sucesso."})
+
+
+@app.route("/api/auth/logout", methods=["POST"])
+def auth_logout():
+    return jsonify({"success": True, "message": "Sessão encerrada com sucesso."})
+
+
+# ─────────────────────────────────────────────
 # ME (Perfil Básico)
 # ─────────────────────────────────────────────
 @app.route("/api/me", methods=["GET"])
@@ -138,7 +285,9 @@ def get_me():
         "success": True,
         "auth_user_id": g.auth_user_id,
         "role": g.user_role,
-        "entity_id": g.entity_id
+        "entity_id": g.entity_id,
+        "email": getattr(g, "email", None),
+        "nome": getattr(g, "user_name", None)
     })
 
 
