@@ -1,7 +1,3 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
-
 # CodeTracker ETE - Aplicação Fullstack com AI
 
 Esta é a documentação completa para rodar sua aplicação localmente e realizar o deploy (implantação) na nuvem.
@@ -97,3 +93,14 @@ Este repositório está configurado com um fluxo automatizado utilizando **GitHu
 Para que isso funcione, certifique-se de preencher as seguintes informações no seu repositório GitHub (Aba Settings > Secrets and Variables > Actions):
 - **Secrets:** `NEON_API_KEY` (Chave da sua conta no Neon)
 - **Variables:** `NEON_PROJECT_ID` (ID do seu projeto no Neon)
+
+## 🎖️ Créditos e Reconhecimentos
+
+Este projeto foi desenvolvido e aprimorado utilizando ferramentas e modelos avançados de Inteligência Artificial:
+
+* **[Google AI Studio](https://aistudio.google.com/):** Plataforma para prototipagem de prompts, engenharia de contexto e integração das APIs de IA.
+* **Modelos Google Gemini:**
+  * **Gemini 3.8:** Raciocínio arquitetural profundo, otimização de integrações e refatoração de código.
+  * **Gemini 3.7:** Estruturação fullstack, geração de componentes e lógica de negócios.
+  * **Gemini Pro:** Motor do Tutor de IA pedagógico socrático integrado ao CodeTracker ETE.
+* **[Antigravity IDE](https://antigravity.google/):** Ambiente de desenvolvimento agentico avançado (Google DeepMind) utilizado durante o pair programming, planejamento de arquitetura e implantação da aplicação.
