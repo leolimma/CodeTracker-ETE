@@ -61,12 +61,12 @@ O seu projeto já possui o arquivo `render.yaml` (Infrastructure as Code) pronto
 
 ### Variáveis de Ambiente no Render:
 
-| Variável | Valor / Instrução |
-| :--- | :--- |
-| **`DATABASE_URL`** | Cole a Connection String copiada do Neon (Passo 2). Certifique-se de que termina com `?sslmode=require`. |
-| **`GEMINI_API_KEY`** | Sua chave de API do Google Gemini (para o Tutor Pedagógico de IA). |
-| **`SESSION_SECRET`** | *(Gerado automaticamente pelo Render como valor aleatório seguro)* |
-| **`VITE_API_URL`** | A URL pública do seu app no Render (ex: `https://codetracker-ete.onrender.com`). |
+| Variável | Obrigatória? | Valor / Instrução |
+| :--- | :---: | :--- |
+| **`DATABASE_URL`** | **Sim** | Cole a Connection String copiada do Neon (Passo 2). Certifique-se de que termina com `?sslmode=require`. |
+| **`SESSION_SECRET`** | Automática | *(Gerada automaticamente pelo Render como valor aleatório seguro)* |
+| **`GEMINI_API_KEY`** | Opcional | Sua chave de API do Google Gemini (necessária caso utilize o Tutor Pedagógico de IA). |
+| **`VITE_API_URL`** | *Desnecessária* | **Não é necessária no Render**: o frontend utiliza caminhos relativos automáticos (`/api/...`), funcionando em qualquer domínio da instância sem risco de URLs desatualizadas. |
 
 5. Clique em **Apply** / **Create Blueprint**.
 
@@ -80,6 +80,7 @@ O seu projeto já possui o arquivo `render.yaml` (Infrastructure as Code) pronto
    * Instalação de dependências do Python (`pip install -r requirements.txt`)
 2. Após o build, o Gunicorn iniciará o servidor Flask servindo a API e a interface React.
 3. Quando o status mudar para **Live**, seu site estará no ar!
+   * URL ativa da instância: `https://codetracker-ete-zj5h.onrender.com/`
 
 ---
 
@@ -88,13 +89,14 @@ O seu projeto já possui o arquivo `render.yaml` (Infrastructure as Code) pronto
 Ao abrir a URL do sistema no navegador, clique em **Acessar Plataforma / Login**:
 
 * **Administrador do Sistema:**
-  * **E-mail:** `admin@ete.edu.br`
+  * **Usuário/E-mail:** `admin` ou `admin@ete.edu.br`
   * **Senha:** `admin123`
-  * *Acesso completo: cadastro de turmas, exercícios, professores, alunos e logs.*
+  * *Acesso completo: gestão de turmas, exercícios, professores, alunos, papéis, auditoria e backups.*
 
-* **Alunos de Demonstração:**
-  * **Matrícula/E-mail:** `ETE2026001` (ou `ete2026001@ete.edu.br`)
-  * **Senha:** `ETE2026001` (a própria matrícula é a senha padrão do aluno)
+* **Alunos de Demonstração (Seed Inicial):**
+  * **Mariana Santos:** Matrícula/Usuário `ETE2026001` (ou `ete2026001@ete.edu.br`) | Senha padrão: `ete123` (ou a matrícula)
+  * **Lucas Silva:** Matrícula/Usuário `ETE2026002` (ou `ete2026002@ete.edu.br`) | Senha padrão: `ete123` (ou a matrícula)
+  * **Carlos Eduardo:** Matrícula/Usuário `ETE2026003` (ou `ete2026003@ete.edu.br`) | Senha padrão: `ete123` (ou a matrícula)
 
 ---
 

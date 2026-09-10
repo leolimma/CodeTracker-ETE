@@ -65,9 +65,9 @@ O seu projeto já possui um arquivo Infrastructure as Code (`render.yaml`) pront
 3. Selecione o repositório do projeto. O Render lerá seu `render.yaml` automaticamente.
 4. Preencha as Variáveis de Ambiente Necessárias:
    - `DATABASE_URL`: Cole a URL de conexão do Neon (com `?sslmode=require`).
-   - `GEMINI_API_KEY`: Sua chave de API do Google Gemini (se for utilizar o tutor IA).
-   - `VITE_API_URL`: A URL final do seu app no Render (ex: `https://codetracker-ete.onrender.com`).
    - `SESSION_SECRET`: *(Gerado automaticamente pelo Render)*.
+   - `GEMINI_API_KEY`: Sua chave de API do Google Gemini (se for utilizar o tutor IA).
+   - *(Nota: `VITE_API_URL` não é necessária no Render, pois o app usa caminhos relativos automáticos no mesmo host).*
 5. Clique em **Apply** / **Create Blueprint**.
 
 ### Passo 4: Acompanhar o Deploy
@@ -78,7 +78,9 @@ O seu projeto já possui um arquivo Infrastructure as Code (`render.yaml`) pront
    - `pip install -r requirements.txt`
 2. Após o build, o Gunicorn iniciará sua aplicação Flask servindo tudo (arquivos React e API).
 3. Quando o status mudar para **Live**, seu site estará online e pronto para uso!
-   - Login do Admin: `admin@ete.edu.br` | Senha: `admin123`
+   - **URL ativa da instância:** `https://codetracker-ete-zj5h.onrender.com/`
+   - **Login do Admin:** `admin` (ou `admin@ete.edu.br`) | Senha: `admin123`
+   - **Alunos de Teste:** `ETE2026001`, `ETE2026002`, `ETE2026003` | Senha padrão: `ete123`
 
 ---
 
