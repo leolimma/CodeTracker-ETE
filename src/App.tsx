@@ -91,16 +91,16 @@ export default function App() {
     async function checkSession() {
       try {
         const user = await getCurrentUser();
-        if (user) {
-          const me = await getMe();
-          setNeonUser({
-            id: user.id,
-            email: user.email,
-            displayName: user.displayName,
-            role: me.role,
-            entityId: me.entity_id
+        if (user && user.role) {
+          setNeonUser(user);
+          setViewMode(getSafeDefaultView(user.role));
+
+          // Sincronização em background com a API para garantir dados atualizados
+          getMe().then(me => {
+            setNeonUser(prev => prev ? { ...prev, role: me.role, entityId: me.entity_id } : null);
+          }).catch(e => {
+            console.warn("Aviso na sincronização em background da sessão:", e);
           });
-          setViewMode(getSafeDefaultView(me.role));
         } else {
           setNeonUser(null);
           setViewMode("auth");
@@ -118,9 +118,12 @@ export default function App() {
 
   // Handle successful login from AuthPanel
   const handleUserLoginChange = async (user: AuthUser | null) => {
-    if (user) {
-      // O AuthPanel passou um AuthUser provisório após o login
-      // Precisamos buscar o perfil completo via API para ter o role correto
+    if (user && user.role) {
+      // Usa imediatamente o usuário e papel retornados pelo login
+      setNeonUser(user);
+      setViewMode(getSafeDefaultView(user.role));
+
+      // Sincroniza em background sem deslogar caso ocorra timeout de rede
       try {
         const me = await getMe();
         const fullUser: AuthUser = {
@@ -131,10 +134,7 @@ export default function App() {
         setNeonUser(fullUser);
         setViewMode(getSafeDefaultView(me.role));
       } catch (err) {
-        console.error("Falha ao resolver perfil pós-login:", err);
-        await signOut();
-        setNeonUser(null);
-        setViewMode("auth");
+        console.warn("Aviso na sincronização pós-login (mantendo sessão):", err);
       }
     } else {
       setNeonUser(null);

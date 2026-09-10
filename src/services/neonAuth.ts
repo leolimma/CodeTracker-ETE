@@ -67,11 +67,7 @@ export async function getAccessToken(): Promise<string | null> {
 /**
  * Obtém o usuário atual salvo na sessão local.
  */
-export async function getCurrentUser(): Promise<{
-  id: string;
-  email: string;
-  displayName: string;
-} | null> {
+export async function getCurrentUser(): Promise<AuthUser | null> {
   const userJson = localStorage.getItem(USER_KEY);
   if (!userJson) return null;
 
@@ -81,6 +77,8 @@ export async function getCurrentUser(): Promise<{
       id: u.id,
       email: u.email || "",
       displayName: u.displayName || u.name || u.email || "",
+      role: (u.role as "admin" | "professor" | "aluno") || "aluno",
+      entityId: u.entityId || u.entity_id || null,
     };
   } catch {
     return null;
