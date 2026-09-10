@@ -28,7 +28,8 @@ import {
 import { Student, Exercise } from "../types";
 import { 
   atualizarStatusPorExercicio,
-  salvarCodigoPorExercicio 
+  salvarCodigoPorExercicio,
+  getAlunoDados 
 } from "../services/apiClient";
 
 import CodeMirror from "@uiw/react-codemirror";
@@ -106,10 +107,23 @@ export default function PythonEditor({
     }
   }, [initialActiveExerciseId, exercises]);
 
-  // Load student progress from Firebase whenever active exercise changes
+  // Carrega código salvo do aluno diretamente do PostgreSQL no Neon
   useEffect(() => {
     if (!selectedExerciseId || !student.id) return;
-    // Logic removed or adapted as per instructions
+    getAlunoDados().then((dados) => {
+      const atv = (dados.atividades || []).find(a => a.exercicio_id === selectedExerciseId);
+      if (atv?.codigo_salvo && atv.codigo_salvo.trim()) {
+        setCode(atv.codigo_salvo);
+        setLastSavedCode(atv.codigo_salvo);
+        setLastSavedTime(new Date(atv.updated_at || atv.created_at || Date.now()).toLocaleTimeString());
+      } else if (activeExercise?.enunciado) {
+        const template = `# ${activeExercise.titulo || activeExercise.title}\n# ${activeExercise.enunciado || activeExercise.descricao || activeExercise.description}\n\n# Escreva seu algoritmo abaixo:\n`;
+        setCode(template);
+        setLastSavedCode(template);
+      }
+    }).catch(() => {
+      // Ignora erro se não for estudante autenticado
+    });
   }, [selectedExerciseId, student.id, activeExercise?.id]);
 
   // Load Pyodide
@@ -244,7 +258,7 @@ sys.stderr = stderr
       const secondsSinceActive = (Date.now() - lastActiveRef.current) / 1000;
       if (secondsSinceActive > 15 && studentState === "Digitando") {
         setStudentState("Inativo");
-        updateFirebaseStatus("Inativo");
+        syncProgressWithDb("Inativo");
       }
     }, 1000);
 
@@ -258,7 +272,7 @@ sys.stderr = stderr
 
     if (studentState !== "Digitando" && studentState !== "Concluído") {
       setStudentState("Digitando");
-      updateFirebaseStatus("Digitando");
+      syncProgressWithDb("Digitando");
     }
 
     // Debounce to stop marking as typing
@@ -269,7 +283,7 @@ sys.stderr = stderr
   };
 
   // Helper to quickly save state
-  const updateFirebaseStatus = async (status: "Digitando" | "Executando" | "Inativo" | "Offline" | "Concluído") => {
+  const syncProgressWithDb = async (status: "Digitando" | "Executando" | "Inativo" | "Offline" | "Concluído") => {
     if (!selectedExerciseId) return;
     const currentCode = codeMirrorInstanceRef.current?.getValue() || code;
     
@@ -283,6 +297,7 @@ sys.stderr = stderr
         estado_atual
       });
       await salvarCodigoPorExercicio(selectedExerciseId, currentCode);
+      setLastSavedTime(new Date().toLocaleTimeString());
     } catch (e) {
       console.error("Erro ao salvar progresso", e);
     }
@@ -295,7 +310,7 @@ sys.stderr = stderr
     setIsExecuting(true);
     setExecutionStatus("RUNNING");
     setStudentState("Executando");
-    updateFirebaseStatus("Executando");
+    syncProgressWithDb("Executando");
     setConsoleOutput("Executando script Python...\n");
 
     const startTime = performance.now();
@@ -336,7 +351,7 @@ stderr.seek(0)
       const nextRunCount = runCount + 1;
       setRunCount(nextRunCount);
 
-      await updateFirebaseStatus("Digitando");
+      await syncProgressWithDb("Digitando");
       setStudentState("Digitando");
 
     } catch (err: any) {
@@ -349,7 +364,7 @@ stderr.seek(0)
       const nextRunCount = runCount + 1;
       setRunCount(nextRunCount);
 
-      await updateFirebaseStatus("Digitando");
+      await syncProgressWithDb("Digitando");
       setStudentState("Digitando");
     } finally {
       setIsExecuting(false);
@@ -360,7 +375,7 @@ stderr.seek(0)
   const handleMarkAsCompleted = async () => {
     setStudentState("Concluído");
     const currentCode = codeMirrorInstanceRef.current?.getValue() || code;
-    await updateFirebaseStatus("Concluído");
+    await syncProgressWithDb("Concluído");
     if (onStatusUpdateTrigger) {
       onStatusUpdateTrigger();
     }
@@ -522,7 +537,7 @@ stderr.seek(0)
 
           {lastSavedTime && (
             <div className="text-center text-[10px] text-slate-500">
-              Última sincronização com Firebase: <strong className="text-slate-400">{lastSavedTime}</strong>
+              Última sincronização com o banco de dados: <strong className="text-slate-400">{lastSavedTime}</strong>
             </div>
           )}
         </div>

@@ -5,7 +5,8 @@
  * com senhas criptografadas no Neon PostgreSQL.
  */
 
-export type { AuthUser } from "../types";
+import type { AuthUser } from "../types";
+export type { AuthUser };
 
 const TOKEN_KEY = "codetracker_auth_token";
 const USER_KEY = "codetracker_auth_user";

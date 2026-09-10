@@ -21,8 +21,33 @@ import {
   MessageSquare,
   Volume2
 } from "lucide-react";
-import { ClassItem, Student, Exercise, StatusLog } from "../types";
+import { ClassItem, Student, Exercise, StatusLog, normalizarNivel } from "../types";
+import { 
+  getProfessorDados, 
+  definirExercicioAtivo, 
+  criarTurma, 
+  criarExercicio, 
+  criarAluno, 
+  atribuirNota 
+} from "../services/apiClient";
 
+export interface StudentProgress {
+  id: string;
+  studentId: string;
+  studentName: string;
+  classId: string;
+  exerciseId: string;
+  codigo: string;
+  ultimaAtualizacao: string;
+  tempoDigitando?: number;
+  tempoTotalEdicao?: number;
+  quantidadeExecucoes?: number;
+  statusAluno: "Digitando" | "Executando" | "Inativo" | "Offline" | "Concluído";
+  ultimaExecucao?: string;
+  cursor?: { line: number; ch: number };
+  linhasCodigo?: number;
+  historico?: Array<{ timestamp: string; codigo: string; linhas: number; caracteres?: number }>;
+}
 
 interface TeacherDashboardProps {
   onClassChange?: (classId: string) => void;
@@ -83,6 +108,7 @@ export default function TeacherDashboard({ onClassChange, lastUpdateTimestamp, o
   const [exercises, setExercises] = useState<Exercise[]>([]);
   const [logs, setLogs] = useState<StatusLog[]>([]);
   const [allProgress, setAllProgress] = useState<StudentProgress[]>([]);
+  const [allActivities, setAllActivities] = useState<any[]>([]);
 
   // Real-time Progress Viewer Modal States
   const [selectedProgressStudent, setSelectedProgressStudent] = useState<Student | null>(null);
@@ -118,281 +144,256 @@ export default function TeacherDashboard({ onClassChange, lastUpdateTimestamp, o
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [showEndSessionConfirm, setShowEndSessionConfirm] = useState<boolean>(false);
 
-  // 1. Load classes, exercises, logs (Realtime Firestore or Poll)
+  // Load complete real database data from Neon PostgreSQL via Flask API
+  const loadDashboardData = async (isBackground = false) => {
+    if (!isBackground) setIsRefreshing(true);
+    try {
+      const data = await getProfessorDados();
+      setClasses(data.turmas);
+      setExercises(data.exercicios);
+      setAllActivities(data.atividades || []);
+
+      // Map historico to StatusLog[]
+      const mappedLogs: StatusLog[] = (data.historico || []).map((h: any) => ({
+        id: h.id,
+        aluno_id: h.aluno_id,
+        aluno_nome: h.aluno_nome,
+        exercicio_id: h.exercicio_id,
+        exercicio_titulo: h.exercicio_titulo,
+        estado_antigo: h.estado_anterior,
+        estado_novo: h.estado_novo,
+        timestamp: h.timestamp,
+        studentId: h.aluno_id,
+        studentName: h.aluno_nome,
+        newStatus: h.estado_novo
+      }));
+      setLogs(mappedLogs);
+
+      const targetClassId = selectedClassId || (data.turmas.length > 0 ? data.turmas[0].id : "");
+      if (!selectedClassId && targetClassId) {
+        setSelectedClassId(targetClassId);
+      }
+
+      const activeClass = data.turmas.find((t) => t.id === targetClassId);
+      const activeExId = activeClass?.exercicio_ativo_id || activeClass?.activeExerciseId;
+
+      const classStudents = data.alunos.filter((a) => (a.turma_id || a.classId) === targetClassId);
+      const enrichedStudents = classStudents.map((s) => {
+        const atv = (data.atividades || []).find(
+          (a: any) => a.aluno_id === s.id && (!activeExId || a.exercicio_id === activeExId)
+        );
+        let status = "IDLE";
+        if (atv) {
+          if (atv.estado_atual === "Codificando") status = "CODING";
+          else if (atv.estado_atual === "Preciso de Ajuda") status = "HELP";
+          else if (atv.estado_atual === "Pausado") status = "PAUSED";
+          else if (atv.estado_atual === "Concluído") status = "COMPLETED";
+        }
+        return {
+          ...s,
+          status,
+          progress: atv?.progresso || 0,
+          grade: atv?.nota ?? null,
+          notes: atv?.observacao || ""
+        };
+      });
+      setStudents(enrichedStudents);
+
+      // Map real student code and execution from database into allProgress (NO MOCK DATA)
+      const progressList: StudentProgress[] = (data.atividades || []).map((atv: any) => {
+        let statusAluno: "Digitando" | "Executando" | "Inativo" | "Offline" | "Concluído" = "Inativo";
+        if (atv.estado_atual === "Concluído") statusAluno = "Concluído";
+        else if (atv.estado_atual === "Codificando") statusAluno = "Digitando";
+        else if (atv.estado_atual === "Preciso de Ajuda") statusAluno = "Inativo";
+
+        const code = atv.codigo_salvo || "# Sem código submetido ainda";
+        const lines = code ? code.split("\n").length : 1;
+
+        const studentHistory = (data.historico || [])
+          .filter((h: any) => h.aluno_id === atv.aluno_id && h.exercicio_id === atv.exercicio_id)
+          .map((h: any) => ({
+            timestamp: h.timestamp,
+            codigo: code,
+            linhas: lines,
+            caracteres: code.length
+          }));
+
+        return {
+          id: atv.id,
+          studentId: atv.aluno_id,
+          studentName: atv.aluno_nome || "",
+          classId: atv.turma_id || "",
+          exerciseId: atv.exercicio_id,
+          codigo: code,
+          ultimaAtualizacao: atv.updated_at || atv.created_at || new Date().toISOString(),
+          tempoDigitando: Math.round((atv.tempo_gasto_segundos || 0) / 2),
+          tempoTotalEdicao: atv.tempo_gasto_segundos || 0,
+          quantidadeExecucoes: atv.progresso > 0 ? Math.max(1, Math.round(atv.progresso / 20)) : 0,
+          statusAluno,
+          ultimaExecucao: atv.observacao || "",
+          cursor: { line: 1, ch: 1 },
+          linhasCodigo: lines,
+          historico: studentHistory
+        };
+      });
+      setAllProgress(progressList);
+
+    } catch (err) {
+      console.error("Erro ao carregar dados do dashboard do professor:", err);
+    } finally {
+      if (!isBackground) setIsRefreshing(false);
+    }
+  };
+
   useEffect(() => {
-    
-      fetchInitialData();
-    
+    loadDashboardData(false);
   }, []);
 
   // Sync refresh on external trigger (like when student portal clicks update)
   useEffect(() => {
-    if (lastUpdateTimestamp > 0 && !isRealFirebaseActive()) {
-      refreshData(false);
+    if (lastUpdateTimestamp > 0) {
+      loadDashboardData(false);
     }
   }, [lastUpdateTimestamp]);
 
   // Handle class selection changes
   useEffect(() => {
     if (!selectedClassId) return;
-    
-    
-      fetchStudents(selectedClassId);
-      if (onClassChange) {
-        onClassChange(selectedClassId);
-      }
-    
+    loadDashboardData(true);
+    if (onClassChange) {
+      onClassChange(selectedClassId);
+    }
   }, [selectedClassId]);
 
-  // Real-time Progress subscription for Python editor
+  // Polling to keep real-time data synchronized
   useEffect(() => {
-    if (!selectedClassId) return;
-
-    
-  }, [selectedClassId, selectedProgressStudent]);
-
-  // Simulação / Geração de dados de progresso locais (quando Firebase não ativo)
-  useEffect(() => {
-    if (isRealFirebaseActive()) return;
-    if (!selectedClassId || students.length === 0) return;
-
-    const activeClass = classes.find((c) => c.id === selectedClassId);
-    if (activeClass?.activeExerciseId) {
-      const mockProgress: StudentProgress[] = students.map((s) => {
-        let code = "";
-        let statusAluno: "Digitando" | "Executando" | "Inativo" | "Offline" | "Concluído" = "Inativo";
-        let qtyExec = 0;
-        let activeSec = 0;
-
-        if (s.status === "COMPLETED") {
-          code = `def calcular_media(notas):\n    soma = sum(notas)\n    return soma / len(notas)\n\nlista_notas = [8.5, 7.0, 9.0, 10.0]\nmedia_final = calcular_media(lista_notas)\nprint(f"Média do aluno: {media_final}")`;
-          statusAluno = "Concluído";
-          qtyExec = 5;
-          activeSec = 450;
-        } else if (s.status === "CODING") {
-          code = `def calcular_media(notas):\n    # TODO: calcular e retornar a media\n    soma = sum(notas)\n    `;
-          statusAluno = "Digitando";
-          qtyExec = 1;
-          activeSec = 180;
-        } else if (s.status === "HELP") {
-          code = `def calcular_media(notas):\n    # help! syntax error na divisao\n    soma = sum(notas)\n    return soma / \n`;
-          statusAluno = "Inativo";
-          qtyExec = 3;
-          activeSec = 320;
-        } else {
-          code = `# Atividade não iniciada ainda`;
-          statusAluno = "Inativo";
-        }
-
-        return {
-          id: `${s.id}_${activeClass.activeExerciseId}`,
-          studentId: s.id,
-          studentName: s.name,
-          classId: selectedClassId,
-          exerciseId: activeClass.activeExerciseId,
-          codigo: code,
-          ultimaAtualizacao: new Date().toISOString(),
-          tempoDigitando: activeSec / 2,
-          quantidadeExecucoes: qtyExec,
-          statusAluno,
-          ultimaExecucao: qtyExec > 0 ? "Média do aluno: 8.625" : "",
-          cursor: { line: 3, ch: 4 },
-          linhasCodigo: code.split("\n").length,
-          tempoTotalEdicao: activeSec,
-          historico: [
-            { codigo: code, timestamp: new Date().toISOString(), linhas: code.split("\n").length, caracteres: code.length },
-            { codigo: code.split("\n").slice(0, 3).join("\n"), timestamp: new Date(Date.now() - 60000).toISOString(), fontLinhas: 3, caracteres: 50 } as any
-          ]
-        };
-      });
-      setAllProgress(mockProgress);
-    } else {
-      setAllProgress([]);
-    }
-  }, [selectedClassId, students, classes]);
-
-  // Set up polling to check student status updates in real-time (Only if not using Firestore)
-  useEffect(() => {
-    if (isRealFirebaseActive()) return;
     const interval = setInterval(() => {
-      refreshData(true);
-    }, 2500); // Poll server every 2.5 seconds
+      loadDashboardData(true);
+    }, 3000);
     return () => clearInterval(interval);
   }, [selectedClassId]);
 
-  const fetchInitialData = () => {
-    setIsRefreshing(true);
-    Promise.all([
-      fetch("/api/classes").then(res => res.json()),
-      fetch("/api/exercises").then(res => res.json()),
-      fetch("/api/logs").then(res => res.json())
-    ])
-      .then(([classesData, exercisesData, logsData]) => {
-        setClasses(classesData);
-        setExercises(exercisesData);
-        setLogs(logsData);
-        if (classesData.length > 0 && !selectedClassId) {
-          setSelectedClassId(classesData[0].id);
-        }
-      })
-      .catch(err => console.error("Error loading initial database:", err))
-      .finally(() => setIsRefreshing(false));
-  };
-
-  const fetchStudents = (classId: string) => {
-    fetch(`/api/classes/${classId}/students`)
-      .then(res => res.json())
-      .then(data => setStudents(data))
-      .catch(err => console.error("Error loading students:", err));
-  };
-
-  const refreshData = (isBackground = false) => {
-    if (!isBackground) setIsRefreshing(true);
-    
-    // Fetch logs & active class state
-    Promise.all([
-      fetch("/api/classes").then(res => res.json()),
-      fetch("/api/logs").then(res => res.json())
-    ])
-      .then(([classesData, logsData]) => {
-        setClasses(classesData);
-        setLogs(logsData);
-        if (selectedClassId) {
-          fetch(`/api/classes/${selectedClassId}/students`)
-            .then(res => res.json())
-            .then(studentData => setStudents(studentData));
-        }
-      })
-      .catch(err => console.error("Error polling statuses:", err))
-      .finally(() => {
-        if (!isBackground) setIsRefreshing(false);
-      });
-  };
+  const fetchInitialData = () => loadDashboardData(false);
+  const refreshData = (isBg = false) => loadDashboardData(isBg);
+  const fetchStudents = () => loadDashboardData(true);
 
   // Assign exercise to active class
-  const handleAssignExercise = () => {
+  const handleAssignExercise = async () => {
     if (!selectedClassId) return;
-
-    
-    
-    fetch(`/api/classes/${selectedClassId}/assign`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ exerciseId: selectedAssignExerciseId })
-    })
-      .then(res => res.json())
-      .then(() => {
-        setShowAssignModal(false);
-        refreshData(false);
-        if (onForceStatusUpdate) {
-          onForceStatusUpdate();
-        }
-      })
-      .catch(err => console.error("Error assigning exercise:", err));
+    try {
+      await definirExercicioAtivo(selectedClassId, selectedAssignExerciseId || null);
+      setShowAssignModal(false);
+      loadDashboardData(false);
+      if (onForceStatusUpdate) {
+        onForceStatusUpdate();
+      }
+    } catch (err) {
+      console.error("Erro ao atribuir exercício:", err);
+    }
   };
 
   // Submit new Class
-  const handleCreateClass = (e: React.FormEvent) => {
+  const handleCreateClass = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newClassName || !newClassRoom) return;
 
-    
-
-    fetch("/api/classes/create", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: newClassName, room: newClassRoom })
-    })
-      .then(res => res.json())
-      .then((newClass) => {
-        setNewClassName("");
-        setNewClassRoom("");
-        setShowNewClassModal(false);
-        fetchInitialData();
-        setSelectedClassId(newClass.id);
-      })
-      .catch(err => console.error("Error creating class:", err));
+    try {
+      const newClass = await criarTurma({
+        nome: newClassName,
+        ano: "2025",
+        curso: "Desenvolvimento de Sistemas",
+        sala: newClassRoom
+      });
+      setNewClassName("");
+      setNewClassRoom("");
+      setShowNewClassModal(false);
+      await loadDashboardData(false);
+      setSelectedClassId(newClass.id);
+    } catch (err) {
+      console.error("Erro ao criar turma:", err);
+    }
   };
 
   // Submit new Exercise
-  const handleCreateExercise = (e: React.FormEvent) => {
+  const handleCreateExercise = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newExerciseTitle || !newExerciseDesc) return;
 
-    
-
-    fetch("/api/exercises/create", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        title: newExerciseTitle,
-        module: newExerciseModule,
-        description: newExerciseDesc,
-        difficulty: newExerciseDiff,
-        estimatedTime: newExerciseTime
-      })
-    })
-      .then(res => res.json())
-      .then(() => {
-        setNewExerciseTitle("");
-        setNewExerciseDesc("");
-        setShowNewExerciseModal(false);
-        fetchInitialData();
-      })
-      .catch(err => console.error("Error creating exercise:", err));
+    try {
+      await criarExercicio({
+        titulo: newExerciseTitle,
+        modulo: newExerciseModule,
+        descricao: newExerciseDesc,
+        nivel: normalizarNivel(newExerciseDiff),
+        tempo_estimado: newExerciseTime
+      });
+      setNewExerciseTitle("");
+      setNewExerciseDesc("");
+      setShowNewExerciseModal(false);
+      loadDashboardData(false);
+    } catch (err) {
+      console.error("Erro ao criar exercício:", err);
+    }
   };
 
   // Submit new Student
-  const handleCreateStudent = (e: React.FormEvent) => {
+  const handleCreateStudent = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newStudentName || !selectedClassId) return;
 
-    
-
-    fetch(`/api/classes/${selectedClassId}/students/add`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: newStudentName })
-    })
-      .then(res => res.json())
-      .then(() => {
-        setNewStudentName("");
-        setShowNewStudentModal(false);
-        fetchStudents(selectedClassId);
-      })
-      .catch(err => console.error("Error creating student:", err));
+    try {
+      await criarAluno({
+        nome: newStudentName,
+        turma_id: selectedClassId
+      });
+      setNewStudentName("");
+      setShowNewStudentModal(false);
+      loadDashboardData(false);
+    } catch (err) {
+      console.error("Erro ao criar aluno:", err);
+    }
   };
 
   // Open grading modal
   const openGradingModal = (student: Student) => {
     setActiveGradingStudent(student);
-    setGradeInput(student.grade !== null ? student.grade.toString() : "");
+    setGradeInput(student.grade !== null && student.grade !== undefined ? student.grade.toString() : "");
     setNotesInput(student.notes || "");
     setShowGradingModal(true);
   };
 
   // Save grade and remarks notes
-  const handleSaveGrading = (e: React.FormEvent) => {
+  const handleSaveGrading = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeGradingStudent) return;
 
-    
-
-    fetch(`/api/students/${activeGradingStudent.id}/grade-notes`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        grade: gradeInput,
-        notes: notesInput
-      })
-    })
-      .then(res => res.json())
-      .then(() => {
-        setShowGradingModal(false);
-        setActiveGradingStudent(null);
-        fetchStudents(selectedClassId);
-      })
-      .catch(err => console.error("Error saving grading remarks:", err));
+    try {
+      const activeClass = classes.find((c) => c.id === selectedClassId);
+      const atv = allActivities.find(
+        (a: any) => a.aluno_id === activeGradingStudent.id && (!activeClass?.exercicio_ativo_id || a.exercicio_id === activeClass.exercicio_ativo_id)
+      );
+      if (atv) {
+        await atribuirNota({
+          atividade_id: atv.id,
+          nota: parseFloat(gradeInput) || 0,
+          observacao: notesInput
+        });
+      } else {
+        await fetch(`/api/students/${activeGradingStudent.id}/grade-notes`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            grade: gradeInput,
+            notes: notesInput
+          })
+        });
+      }
+      setShowGradingModal(false);
+      setActiveGradingStudent(null);
+      loadDashboardData(false);
+    } catch (err) {
+      console.error("Erro ao salvar nota:", err);
+    }
   };
 
   // CSV Generator downloader

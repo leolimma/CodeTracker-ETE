@@ -22,7 +22,7 @@ import {
   GraduationCap
 } from "lucide-react";
 import { ClassItem, Student, Exercise } from "../types";
-import { initFirebase } from "../lib/firebase";
+import { getProfessores, getAuditLogs, getTurmas, getAlunos, getExercicios, exportarDados } from "../services/apiClient";
 
 
 // Local types matching server.ts models
@@ -126,39 +126,39 @@ export default function AdminPanel({ currentUser, onForceStatusUpdate }: AdminPa
   const loadData = async () => {
     setIsLoading(true);
     try {
-      const promises: Promise<any>[] = [
-        fetch("/api/teachers").then(r => r.json()),
-        fetch("/api/admin/audits").then(r => r.json()),
-        fetch("/api/admin/backups").then(r => r.json()),
-      ];
+      const [
+        profs,
+        auditsList,
+        backupsList,
+        classList,
+        studentList,
+        exerciseList,
+        usersList
+      ] = await Promise.all([
+        getProfessores().catch(() => []),
+        getAuditLogs().catch(() => []),
+        fetch("/api/admin/backups").then(r => r.ok ? r.json() : []).catch(() => []),
+        getTurmas().catch(() => []),
+        getAlunos().catch(() => []),
+        getExercicios().catch(() => []),
+        fetch("/api/users").then(r => r.ok ? r.json() : { users: [] }).then(d => d.users || d.usuarios || (Array.isArray(d) ? d : [])).catch(() => [])
+      ]);
 
-      if (!isRealFirebaseActive()) {
-        promises.push(fetch("/api/classes").then(r => r.json()));
-        promises.push(fetch("/api/students").then(r => r.json()));
-        promises.push(fetch("/api/exercises").then(r => r.json()));
-        promises.push(fetch("/api/users").then(r => r.json()).catch(() => []));
-      }
+      setTeachers((profs || []).map((p: any) => ({
+        id: p.id,
+        username: p.usuario || p.username || "",
+        name: p.nome || p.name || "",
+        email: p.email,
+      })));
+      setAudits(auditsList || []);
+      setBackups(backupsList || []);
+      setClasses(classList || []);
+      setStudents(studentList || []);
+      setExercises(exerciseList || []);
+      setUsers(usersList || []);
 
-      const results = await Promise.all(promises);
-
-      setTeachers(results[0] || []);
-      setAudits(results[1] || []);
-      setBackups(results[2] || []);
-
-      if (!isRealFirebaseActive()) {
-        const clsRes = results[3] || [];
-        const stdRes = results[4] || [];
-        const exeRes = results[5] || [];
-        const usrRes = results[6] || [];
-
-        setClasses(clsRes);
-        setStudents(stdRes);
-        setExercises(exeRes);
-        setUsers(usrRes);
-
-        if (clsRes.length > 0 && !csvTargetClassId) {
-          setCsvTargetClassId(clsRes[0].id);
-        }
+      if (classList && classList.length > 0 && !csvTargetClassId) {
+        setCsvTargetClassId(classList[0].id);
       }
     } catch (err: any) {
       showAlert("Erro ao buscar dados do servidor: " + err.message, "error");
@@ -170,23 +170,6 @@ export default function AdminPanel({ currentUser, onForceStatusUpdate }: AdminPa
   useEffect(() => {
     loadData();
   }, []);
-
-  // Real-time subscribe to Classes, Students, Exercises and Users if Firebase is active
-  useEffect(() => {
-    let unsubClasses: (() => void) | null = null;
-    let unsubStudents: (() => void) | null = null;
-    let unsubExercises: (() => void) | null = null;
-    let unsubUsers: (() => void) | null = null;
-
-    
-
-    return () => {
-      if (unsubClasses) unsubClasses();
-      if (unsubStudents) unsubStudents();
-      if (unsubExercises) unsubExercises();
-      if (unsubUsers) unsubUsers();
-    };
-  }, [currentUser]);
 
   // Reset page when tab changes
   useEffect(() => {
@@ -576,19 +559,17 @@ export default function AdminPanel({ currentUser, onForceStatusUpdate }: AdminPa
             <span>Gerenciar Alunos</span>
           </button>
 
-          {isRealFirebaseActive() && (
-            <button
-              onClick={() => setActiveTab("users")}
-              className={`w-full text-left px-3 py-2 rounded-lg text-xs font-semibold transition-all flex items-center gap-2.5 cursor-pointer shrink-0 lg:shrink ${
-                activeTab === "users" 
-                  ? "bg-slate-900 text-white shadow-sm" 
-                  : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-              }`}
-            >
-              <Users className="w-4 h-4" />
-              <span>Usuários & Papéis</span>
-            </button>
-          )}
+          <button
+            onClick={() => setActiveTab("users")}
+            className={`w-full text-left px-3 py-2 rounded-lg text-xs font-semibold transition-all flex items-center gap-2.5 cursor-pointer shrink-0 lg:shrink ${
+              activeTab === "users" 
+                ? "bg-slate-900 text-white shadow-sm" 
+                : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+            }`}
+          >
+            <Users className="w-4 h-4" />
+            <span>Usuários & Papéis</span>
+          </button>
 
           <button
             onClick={() => setActiveTab("exercises")}
@@ -1046,7 +1027,7 @@ export default function AdminPanel({ currentUser, onForceStatusUpdate }: AdminPa
                         <td className="p-3 text-right">
                           <div className="flex items-center justify-end gap-1.5">
                             <button
-                              onClick={() => setEditModal({ type: "student", mode: "edit", isOpen: true, data: { ...s, email: s.email || `${s.id.toLowerCase()}@ete.br`, password: s.password || "ete123" } })}
+                              onClick={() => setEditModal({ type: "student", mode: "edit", isOpen: true, data: { ...s, email: s.email || `${s.id.toLowerCase()}@ete.br`, password: (s as any).password || "ete123" } })}
                               className="p-1 text-slate-400 hover:text-brand-primary hover:bg-slate-100 rounded transition-all cursor-pointer"
                               title="Editar"
                             >

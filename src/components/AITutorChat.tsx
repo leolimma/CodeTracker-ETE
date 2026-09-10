@@ -30,7 +30,7 @@ export default function AITutorChat({ exercicioId, codigoAtual }: AITutorChatPro
     if (!input.trim() || isTyping) return;
 
     const userMsg = input.trim();
-    const newMessages: AIMensagem[] = [...messages, { role: 'user', content: userMsg }];
+    const newMessages: AIMensagem[] = [...messages, { role: 'user', content: userMsg, timestamp: Date.now() }];
     
     setMessages(newMessages);
     setInput('');
@@ -44,9 +44,9 @@ export default function AITutorChat({ exercicioId, codigoAtual }: AITutorChatPro
         historico_conversa: messages
       });
 
-      setMessages([...newMessages, { role: 'assistant', content: result.resposta }]);
+      setMessages([...newMessages, { role: 'assistant', content: result.resposta, timestamp: Date.now() }]);
     } catch (err: any) {
-      setMessages([...newMessages, { role: 'assistant', content: `Erro de conexão com o Tutor: ${err.message}` }]);
+      setMessages([...newMessages, { role: 'assistant', content: `Erro de conexão com o Tutor: ${err.message}`, timestamp: Date.now() }]);
     } finally {
       setIsTyping(false);
     }

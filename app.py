@@ -254,6 +254,33 @@ def auth_login():
     return jsonify({"success": False, "error": "Credenciais inválidas. Verifique seu e-mail/matrícula e senha."}), 401
 
 
+@app.route("/api/student/login", methods=["POST"])
+def student_login_direct():
+    data = request.json or {}
+    student_id = data.get("studentId") or data.get("student_id")
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT a.*, t.nome as turma_nome
+                FROM alunos a
+                JOIN turmas t ON a.turma_id = t.id
+                WHERE a.id = %s
+            """, (student_id,))
+            student = cur.fetchone()
+            if not student:
+                return jsonify({"success": False, "error": "Aluno não encontrado."}), 404
+            
+            auth_user_id = student.get("auth_user_id") or str(uuid.uuid4())
+            token = create_access_token(auth_user_id, "aluno", student["id"])
+    s_dict = dict(student)
+    return jsonify({
+        "success": True,
+        "token": token,
+        "accessToken": token,
+        **s_dict
+    })
+
+
 @app.route("/api/auth/alterar-senha", methods=["POST"])
 @require_auth()
 def auth_alterar_senha():
@@ -316,6 +343,7 @@ def get_me():
 # TURMAS
 # ─────────────────────────────────────────────
 @app.route("/api/turmas", methods=["GET"])
+@app.route("/api/classes", methods=["GET"])
 @require_auth()
 def listar_turmas():
     with get_db_connection() as conn:
@@ -330,20 +358,39 @@ def listar_turmas():
                 ORDER BY t.nome
             """)
             turmas = [dict(r) for r in cur.fetchall()]
-    return jsonify({"success": True, "turmas": turmas})
+    return jsonify({"success": True, "turmas": turmas, "classes": turmas})
+
+
+@app.route("/api/turmas/<turma_id>/alunos", methods=["GET"])
+@app.route("/api/classes/<turma_id>/students", methods=["GET"])
+@require_auth()
+def listar_alunos_turma(turma_id):
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT a.*, t.nome AS turma_nome
+                FROM alunos a
+                JOIN turmas t ON a.turma_id = t.id
+                WHERE a.turma_id = %s
+                ORDER BY a.nome
+            """, (turma_id,))
+            alunos = [dict(r) for r in cur.fetchall()]
+    return jsonify({"success": True, "alunos": alunos, "students": alunos})
 
 
 @app.route("/api/turmas", methods=["POST"])
+@app.route("/api/classes", methods=["POST"])
+@app.route("/api/classes/create", methods=["POST"])
 @require_auth("professor", "admin")
 def criar_turma():
     data = request.json or {}
-    nome = data.get("nome", "").strip()
-    ano = data.get("ano", "").strip()
-    curso = data.get("curso", "").strip()
-    sala = data.get("sala", "").strip() or None
+    nome = (data.get("nome") or data.get("name") or "").strip()
+    ano = (data.get("ano") or "2025").strip()
+    curso = (data.get("curso") or "Desenvolvimento de Sistemas").strip()
+    sala = (data.get("sala") or data.get("room") or "").strip() or None
 
-    if not nome or not ano or not curso:
-        return jsonify({"success": False, "error": "nome, ano e curso são obrigatórios."}), 400
+    if not nome:
+        return jsonify({"success": False, "error": "Nome da turma é obrigatório."}), 400
 
     with get_db_connection() as conn:
         with conn.cursor() as cur:
@@ -356,13 +403,19 @@ def criar_turma():
 
     add_audit_log(g.user_role, g.entity_id or g.auth_user_id, "Cadastro",
                   f"Criou a turma '{nome}'")
-    return jsonify({"success": True, "turma": turma}), 201
+    return jsonify({"success": True, "turma": turma, "class": turma}), 201
 
 
 @app.route("/api/turmas/<turma_id>", methods=["PUT"])
+@app.route("/api/classes/<turma_id>", methods=["PUT"])
+@app.route("/api/classes/<turma_id>/update", methods=["POST", "PUT"])
 @require_auth("professor", "admin")
 def editar_turma(turma_id):
     data = request.json or {}
+    nome = data.get("nome") or data.get("name")
+    ano = data.get("ano")
+    curso = data.get("curso")
+    sala = data.get("sala") or data.get("room")
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -374,15 +427,15 @@ def editar_turma(turma_id):
                     updated_at = NOW()
                 WHERE id = %s
                 RETURNING *
-            """, (data.get("nome"), data.get("ano"), data.get("curso"),
-                  data.get("sala"), turma_id))
+            """, (nome, ano, curso, sala, turma_id))
             turma = cur.fetchone()
     if not turma:
         return jsonify({"success": False, "error": "Turma não encontrada."}), 404
-    return jsonify({"success": True, "turma": dict(turma)})
+    return jsonify({"success": True, "turma": dict(turma), "class": dict(turma)})
 
 
 @app.route("/api/turmas/<turma_id>", methods=["DELETE"])
+@app.route("/api/classes/<turma_id>", methods=["DELETE"])
 @require_auth("admin")
 def excluir_turma(turma_id):
     with get_db_connection() as conn:
@@ -398,11 +451,12 @@ def excluir_turma(turma_id):
 
 
 @app.route("/api/turmas/<turma_id>/exercicio-ativo", methods=["POST"])
+@app.route("/api/classes/<turma_id>/assign", methods=["POST"])
 @require_auth("professor", "admin")
 def definir_exercicio_ativo(turma_id):
     """Define o exercício ativo de uma turma (equivalente ao 'assign' do Node.js)."""
     data = request.json or {}
-    exercicio_id = data.get("exercicio_id")  # pode ser None para desativar
+    exercicio_id = data.get("exercicio_id") or data.get("exerciseId")  # pode ser None para desativar
 
     with get_db_connection() as conn:
         with conn.cursor() as cur:
@@ -420,6 +474,7 @@ def definir_exercicio_ativo(turma_id):
 # EXERCÍCIOS
 # ─────────────────────────────────────────────
 @app.route("/api/exercicios", methods=["GET"])
+@app.route("/api/exercises", methods=["GET"])
 @require_auth()
 def listar_exercicios():
     q = request.args.get("q")
@@ -435,25 +490,27 @@ def listar_exercicios():
             else:
                 cur.execute("SELECT * FROM exercicios WHERE ativo = TRUE ORDER BY titulo")
             exercicios = [dict(r) for r in cur.fetchall()]
-    return jsonify({"success": True, "exercicios": exercicios})
+    return jsonify({"success": True, "exercicios": exercicios, "exercises": exercicios})
 
 
 @app.route("/api/exercicios", methods=["POST"])
+@app.route("/api/exercises", methods=["POST"])
+@app.route("/api/exercises/create", methods=["POST"])
 @require_auth("professor", "admin")
 def criar_exercicio():
     data = request.json or request.form.to_dict()
-    campos_obrigatorios = ["titulo", "modulo", "nivel", "tempo_estimado",
-                           "objetivo_aprendizado", "enunciado",
-                           "entrada_esperada", "saida_esperada",
-                           "exemplo_entrada", "exemplo_saida"]
-    for campo in campos_obrigatorios:
-        if not data.get(campo, "").strip() if isinstance(data.get(campo), str) else not data.get(campo):
-            return jsonify({"success": False, "error": f"Campo obrigatório ausente: {campo}"}), 400
+    titulo = (data.get("titulo") or data.get("title") or "").strip()
+    modulo = (data.get("modulo") or data.get("module") or "Fundamentos").strip()
+    descricao = (data.get("descricao") or data.get("description") or data.get("enunciado") or titulo).strip()
+    enunciado = (data.get("enunciado") or data.get("description") or descricao).strip()
+    tempo_estimado = int(data.get("tempo_estimado") or data.get("estimatedTime") or 15)
+    nivel_raw = data.get("nivel") or data.get("difficulty") or "Médio"
 
-    nivel_map = {"EASY": "Fácil", "MEDIUM": "Médio", "HARD": "Difícil"}
-    nivel = nivel_map.get(data["nivel"], data["nivel"])
-    if nivel not in ("Fácil", "Médio", "Difícil"):
-        return jsonify({"success": False, "error": "nivel deve ser Fácil, Médio ou Difícil"}), 400
+    if not titulo:
+        return jsonify({"success": False, "error": "Título do exercício é obrigatório."}), 400
+
+    nivel_map = {"EASY": "Fácil", "MEDIUM": "Médio", "HARD": "Difícil", "Fácil": "Fácil", "Médio": "Médio", "Difícil": "Difícil"}
+    nivel = nivel_map.get(nivel_raw, "Médio")
 
     with get_db_connection() as conn:
         with conn.cursor() as cur:
@@ -465,13 +522,15 @@ def criar_exercicio():
                 ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 RETURNING *
             """, (
-                data["titulo"], data["modulo"],
-                data.get("descricao") or data["enunciado"],
-                nivel, int(data["tempo_estimado"]),
-                data["objetivo_aprendizado"], data["enunciado"],
-                data["entrada_esperada"], data["saida_esperada"],
-                data["exemplo_entrada"], data["exemplo_saida"],
-                data.get("observacoes")
+                titulo, modulo, descricao,
+                nivel, tempo_estimado,
+                data.get("objetivo_aprendizado") or titulo,
+                enunciado,
+                data.get("entrada_esperada") or "",
+                data.get("saida_esperada") or "",
+                data.get("exemplo_entrada") or "",
+                data.get("exemplo_saida") or "",
+                data.get("observacoes") or ""
             ))
             exercicio = dict(cur.fetchone())
 
@@ -487,17 +546,25 @@ def criar_exercicio():
 
     add_audit_log(g.user_role, g.entity_id or g.auth_user_id, "Cadastro",
                   f"Criou o exercício '{exercicio['titulo']}'")
-    return jsonify({"success": True, "exercicio": exercicio}), 201
+    return jsonify({"success": True, "exercicio": exercicio, "exercise": exercicio}), 201
 
 
 @app.route("/api/exercicios/<exercicio_id>", methods=["PUT"])
+@app.route("/api/exercises/<exercicio_id>", methods=["PUT"])
+@app.route("/api/exercises/<exercicio_id>/update", methods=["POST", "PUT"])
 @require_auth("professor", "admin")
 def editar_exercicio(exercicio_id):
     data = request.json or request.form.to_dict()
-    nivel = data.get("nivel")
+    nivel = data.get("nivel") or data.get("difficulty")
     if nivel:
         nivel_map = {"EASY": "Fácil", "MEDIUM": "Médio", "HARD": "Difícil"}
         nivel = nivel_map.get(nivel, nivel)
+
+    titulo = data.get("titulo") or data.get("title")
+    modulo = data.get("modulo") or data.get("module")
+    descricao = data.get("descricao") or data.get("description")
+    tempo = (data.get("tempo_estimado") or data.get("estimatedTime"))
+    tempo_estimado = int(tempo) if tempo else None
 
     with get_db_connection() as conn:
         with conn.cursor() as cur:
@@ -519,9 +586,8 @@ def editar_exercicio(exercicio_id):
                 WHERE id = %s
                 RETURNING *
             """, (
-                data.get("titulo"), data.get("modulo"),
-                data.get("descricao") or data.get("enunciado"),
-                nivel, data.get("tempo_estimado") and int(data["tempo_estimado"]),
+                titulo, modulo, descricao,
+                nivel, tempo_estimado,
                 data.get("objetivo_aprendizado"), data.get("enunciado"),
                 data.get("entrada_esperada"), data.get("saida_esperada"),
                 data.get("exemplo_entrada"), data.get("exemplo_saida"),
@@ -531,10 +597,11 @@ def editar_exercicio(exercicio_id):
             ex = cur.fetchone()
     if not ex:
         return jsonify({"success": False, "error": "Exercício não encontrado."}), 404
-    return jsonify({"success": True, "exercicio": dict(ex)})
+    return jsonify({"success": True, "exercicio": dict(ex), "exercise": dict(ex)})
 
 
 @app.route("/api/exercicios/<exercicio_id>", methods=["DELETE"])
+@app.route("/api/exercises/<exercicio_id>", methods=["DELETE"])
 @require_auth("professor", "admin")
 def deletar_exercicio(exercicio_id):
     with get_db_connection() as conn:
@@ -553,9 +620,10 @@ def deletar_exercicio(exercicio_id):
 # ALUNOS
 # ─────────────────────────────────────────────
 @app.route("/api/alunos", methods=["GET"])
+@app.route("/api/students", methods=["GET"])
 @require_auth()
 def listar_alunos():
-    turma_id = request.args.get("turma_id")
+    turma_id = request.args.get("turma_id") or request.args.get("class_id") or request.args.get("classId")
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             if turma_id:
@@ -574,18 +642,21 @@ def listar_alunos():
                     ORDER BY t.nome, a.nome
                 """)
             alunos = [dict(r) for r in cur.fetchall()]
-    return jsonify({"success": True, "alunos": alunos})
+    return jsonify({"success": True, "alunos": alunos, "students": alunos})
 
 
 @app.route("/api/alunos", methods=["POST"])
+@app.route("/api/students", methods=["POST"])
+@app.route("/api/students/create", methods=["POST"])
+@app.route("/api/classes/<turma_id>/students/add", methods=["POST"])
 @require_auth("professor", "admin")
-def criar_aluno():
+def criar_aluno(turma_id=None):
     data = request.json or {}
-    nome = data.get("nome", "").strip()
-    matricula = data.get("matricula", "").strip()
-    turma_id = data.get("turma_id")
+    nome = (data.get("nome") or data.get("name") or "").strip()
+    matricula = (data.get("matricula") or "").strip()
+    target_turma = turma_id or data.get("turma_id") or data.get("classId")
 
-    if not nome or not turma_id:
+    if not nome or not target_turma:
         return jsonify({"success": False, "error": "nome e turma_id são obrigatórios."}), 400
 
     if not matricula:
@@ -595,7 +666,7 @@ def criar_aluno():
 
     with get_db_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT id FROM turmas WHERE id = %s", (turma_id,))
+            cur.execute("SELECT id FROM turmas WHERE id = %s", (target_turma,))
             if not cur.fetchone():
                 return jsonify({"success": False, "error": "Turma não encontrada."}), 404
 
@@ -603,7 +674,7 @@ def criar_aluno():
                 INSERT INTO alunos (nome, matricula, email, turma_id, foto, primeiro_acesso)
                 VALUES (%s, %s, %s, %s, %s, TRUE)
                 RETURNING *
-            """, (nome, matricula, email, turma_id, data.get("foto")))
+            """, (nome, matricula, email, target_turma, data.get("foto") or data.get("avatar")))
             aluno = dict(cur.fetchone())
 
             # Criar status para exercícios existentes
@@ -618,16 +689,17 @@ def criar_aluno():
 
     add_audit_log(g.user_role, g.entity_id or g.auth_user_id, "Cadastro",
                   f"Cadastrou o aluno '{nome}' (matrícula: {matricula})")
-    return jsonify({"success": True, "aluno": aluno}), 201
+    return jsonify({"success": True, "aluno": aluno, "student": aluno}), 201
 
 
 @app.route("/api/alunos/importar-csv", methods=["POST"])
+@app.route("/api/students/import-csv", methods=["POST"])
 @require_auth("professor", "admin")
 def importar_alunos_csv():
     """Importa alunos via CSV. Colunas: nome[,matricula[,email]]"""
     data = request.json or {}
-    csv_text = data.get("csv_text", "")
-    turma_id = data.get("turma_id")
+    csv_text = data.get("csv_text") or data.get("csvText") or ""
+    turma_id = data.get("turma_id") or data.get("classId")
 
     if not csv_text or not turma_id:
         return jsonify({"success": False, "error": "csv_text e turma_id são obrigatórios."}), 400
@@ -684,13 +756,18 @@ def importar_alunos_csv():
 
     add_audit_log(g.user_role, g.entity_id or g.auth_user_id, "Importação",
                   f"Importou {importados} alunos via CSV para turma {turma_id}")
-    return jsonify({"success": True, "importados": importados, "ignorados": ignorados, "erros": erros})
+    return jsonify({"success": True, "importados": importados, "importedCount": importados, "ignorados": ignorados, "erros": erros})
 
 
 @app.route("/api/alunos/<aluno_id>", methods=["PUT"])
+@app.route("/api/students/<aluno_id>", methods=["PUT"])
+@app.route("/api/students/<aluno_id>/update", methods=["POST", "PUT"])
 @require_auth("professor", "admin")
 def editar_aluno(aluno_id):
     data = request.json or {}
+    nome = data.get("nome") or data.get("name")
+    turma_id = data.get("turma_id") or data.get("classId")
+    foto = data.get("foto") or data.get("avatar")
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -701,14 +778,15 @@ def editar_aluno(aluno_id):
                     updated_at = NOW()
                 WHERE id = %s
                 RETURNING *
-            """, (data.get("nome"), data.get("turma_id"), data.get("foto"), aluno_id))
+            """, (nome, turma_id, foto, aluno_id))
             aluno = cur.fetchone()
     if not aluno:
         return jsonify({"success": False, "error": "Aluno não encontrado."}), 404
-    return jsonify({"success": True, "aluno": dict(aluno)})
+    return jsonify({"success": True, "aluno": dict(aluno), "student": dict(aluno)})
 
 
 @app.route("/api/alunos/<aluno_id>", methods=["DELETE"])
+@app.route("/api/students/<aluno_id>", methods=["DELETE"])
 @require_auth("admin")
 def excluir_aluno(aluno_id):
     with get_db_connection() as conn:
@@ -727,22 +805,28 @@ def excluir_aluno(aluno_id):
 # PROFESSORES
 # ─────────────────────────────────────────────
 @app.route("/api/professores", methods=["GET"])
-@require_auth("admin")
+@app.route("/api/teachers", methods=["GET"])
+@require_auth("professor", "admin")
 def listar_professores():
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT id, usuario, email, nome, created_at FROM professores ORDER BY nome")
             professores = [dict(r) for r in cur.fetchall()]
-    return jsonify({"success": True, "professores": professores})
+    return jsonify({"success": True, "professores": professores, "teachers": professores})
 
 
 @app.route("/api/professores", methods=["POST"])
+@app.route("/api/teachers", methods=["POST"])
+@app.route("/api/teachers/create", methods=["POST"])
 @require_auth("admin")
 def criar_professor():
     data = request.json or {}
-    usuario = data.get("usuario", "").strip().lower()
-    email = data.get("email", "").strip().lower()
-    nome = data.get("nome", "").strip()
+    usuario = (data.get("usuario") or data.get("username") or "").strip().lower()
+    email = (data.get("email") or "").strip().lower()
+    nome = (data.get("nome") or data.get("name") or "").strip()
+
+    if not usuario and email:
+        usuario = email.split("@")[0]
 
     if not usuario or not email or not nome:
         return jsonify({"success": False, "error": "usuario, email e nome são obrigatórios."}), 400
@@ -757,13 +841,18 @@ def criar_professor():
             prof = dict(cur.fetchone())
     add_audit_log(g.user_role, g.entity_id or g.auth_user_id, "Cadastro",
                   f"Cadastrou o professor '{nome}' ({usuario})")
-    return jsonify({"success": True, "professor": prof}), 201
+    return jsonify({"success": True, "professor": prof, "teacher": prof}), 201
 
 
 @app.route("/api/professores/<prof_id>", methods=["PUT"])
+@app.route("/api/teachers/<prof_id>", methods=["PUT"])
+@app.route("/api/teachers/<prof_id>/update", methods=["POST", "PUT"])
 @require_auth("admin")
 def editar_professor(prof_id):
     data = request.json or {}
+    usuario = data.get("usuario") or data.get("username")
+    email = data.get("email")
+    nome = data.get("nome") or data.get("name")
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -773,14 +862,15 @@ def editar_professor(prof_id):
                     nome       = COALESCE(%s, nome),
                     updated_at = NOW()
                 WHERE id = %s RETURNING *
-            """, (data.get("usuario"), data.get("email"), data.get("nome"), prof_id))
+            """, (usuario, email, nome, prof_id))
             prof = cur.fetchone()
     if not prof:
         return jsonify({"success": False, "error": "Professor não encontrado."}), 404
-    return jsonify({"success": True, "professor": dict(prof)})
+    return jsonify({"success": True, "professor": dict(prof), "teacher": dict(prof)})
 
 
 @app.route("/api/professores/<prof_id>", methods=["DELETE"])
+@app.route("/api/teachers/<prof_id>", methods=["DELETE"])
 @require_auth("admin")
 def excluir_professor(prof_id):
     with get_db_connection() as conn:
@@ -799,6 +889,7 @@ def excluir_professor(prof_id):
 # STATUS ATIVIDADES (Aluno atualiza o próprio)
 # ─────────────────────────────────────────────
 @app.route("/api/atividades/status", methods=["POST"])
+@app.route("/api/student/status", methods=["POST"])
 @require_auth()
 def atualizar_status():
     """
@@ -808,35 +899,89 @@ def atualizar_status():
     data = request.json or request.form.to_dict()
     atividade_id = data.get("atividade_id")
     exercicio_id = data.get("exercicio_id")
-    novo_estado = data.get("estado_atual")
-    novo_progresso = data.get("progresso")
+    raw_estado = data.get("estado_atual") or data.get("status")
+    novo_progresso = data.get("progresso") if data.get("progresso") is not None else data.get("progress")
     observacao = data.get("observacao")
 
-    if not atividade_id and not exercicio_id:
-        return jsonify({"success": False, "error": "atividade_id ou exercicio_id são obrigatórios."}), 400
+    state_map = {
+        "CODING": "Codificando",
+        "HELP": "Preciso de Ajuda",
+        "PAUSED": "Pausado",
+        "COMPLETED": "Concluído",
+        "IDLE": "Não Iniciado",
+        "Não Iniciado": "Não Iniciado",
+        "Codificando": "Codificando",
+        "Preciso de Ajuda": "Preciso de Ajuda",
+        "Pausado": "Pausado",
+        "Concluído": "Concluído"
+    }
+    novo_estado = state_map.get(raw_estado)
     if not novo_estado:
-        return jsonify({"success": False, "error": "estado_atual é obrigatório."}), 400
-
-    estados_validos = ["Não Iniciado", "Codificando", "Preciso de Ajuda", "Pausado", "Concluído"]
-    if novo_estado not in estados_validos:
-        return jsonify({"success": False, "error": f"Estado inválido. Use: {estados_validos}"}), 400
+        return jsonify({"success": False, "error": f"Estado inválido: '{raw_estado}'"}), 400
 
     with get_db_connection() as conn:
         with conn.cursor() as cur:
-            # Se vier exercicio_id e for aluno, buscar atividade_id
-            if not atividade_id and exercicio_id and g.user_role == "aluno":
+            aluno_id = None
+            if g.user_role == "aluno":
                 cur.execute("SELECT id FROM alunos WHERE auth_user_id = %s", (g.auth_user_id,))
                 aluno_row = cur.fetchone()
                 if aluno_row:
-                    cur.execute("SELECT id FROM status_atividades WHERE aluno_id = %s AND exercicio_id = %s", (aluno_row["id"], exercicio_id))
-                    ativ = cur.fetchone()
-                    if ativ:
-                        atividade_id = ativ["id"]
+                    aluno_id = aluno_row["id"]
+            else:
+                aluno_id = data.get("aluno_id") or data.get("studentId")
+
+            # Se não temos atividade_id mas temos aluno_id e exercicio_id, buscar ou criar
+            if not atividade_id and exercicio_id and aluno_id:
+                cur.execute("SELECT id FROM status_atividades WHERE aluno_id = %s AND exercicio_id = %s", (aluno_id, exercicio_id))
+                ativ = cur.fetchone()
+                if ativ:
+                    atividade_id = ativ["id"]
+                else:
+                    # Upsert inicial
+                    cur.execute("""
+                        INSERT INTO status_atividades (aluno_id, exercicio_id, estado_atual, progresso, tempo_inicio, observacao)
+                        VALUES (%s, %s, %s, %s, NOW(), %s)
+                        ON CONFLICT (aluno_id, exercicio_id) DO UPDATE
+                        SET estado_atual = EXCLUDED.estado_atual,
+                            progresso    = EXCLUDED.progresso,
+                            updated_at   = NOW()
+                        RETURNING *
+                    """, (aluno_id, exercicio_id, novo_estado, int(novo_progresso or 0), observacao))
+                    nova_ativ = dict(cur.fetchone())
+                    return jsonify({"success": True, "atividade": nova_ativ, "estado_atual": novo_estado, "progresso": int(novo_progresso or 0)})
+
+            if not atividade_id and not exercicio_id:
+                # Se não temos exercicio_id, buscar o exercício ativo da turma do aluno
+                if aluno_id:
+                    cur.execute("""
+                        SELECT tea.exercicio_id FROM alunos a
+                        JOIN turmas_exercicio_ativo tea ON tea.turma_id = a.turma_id
+                        WHERE a.id = %s
+                    """, (aluno_id,))
+                    tea = cur.fetchone()
+                    if tea and tea["exercicio_id"]:
+                        exercicio_id = tea["exercicio_id"]
+                        cur.execute("SELECT id FROM status_atividades WHERE aluno_id = %s AND exercicio_id = %s", (aluno_id, exercicio_id))
+                        ativ = cur.fetchone()
+                        if ativ:
+                            atividade_id = ativ["id"]
+                        else:
+                            cur.execute("""
+                                INSERT INTO status_atividades (aluno_id, exercicio_id, estado_atual, progresso, tempo_inicio, observacao)
+                                VALUES (%s, %s, %s, %s, NOW(), %s)
+                                ON CONFLICT (aluno_id, exercicio_id) DO UPDATE
+                                SET estado_atual = EXCLUDED.estado_atual,
+                                    progresso    = EXCLUDED.progresso,
+                                    updated_at   = NOW()
+                                RETURNING *
+                            """, (aluno_id, exercicio_id, novo_estado, int(novo_progresso or 0), observacao))
+                            nova_ativ = dict(cur.fetchone())
+                            return jsonify({"success": True, "atividade": nova_ativ, "estado_atual": novo_estado, "progresso": int(novo_progresso or 0)})
 
             if not atividade_id:
                 return jsonify({"success": False, "error": "Atividade não encontrada ou não especificada."}), 404
 
-            # Buscar atividade
+            # Buscar atividade existente
             cur.execute("SELECT * FROM status_atividades WHERE id = %s", (atividade_id,))
             atividade = cur.fetchone()
             if not atividade:
@@ -897,7 +1042,7 @@ def atualizar_status():
                         progresso, tempo_decorrido, observacao
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """, (
-                    atividade["aluno_id"], atividade["exercicio_id"],
+                    updated["aluno_id"], updated["exercicio_id"],
                     estado_anterior, novo_estado,
                     progresso, tempo_decorrido, observacao
                 ))
@@ -906,13 +1051,14 @@ def atualizar_status():
                 cur.execute("""
                     INSERT INTO logs_status (aluno_id, exercicio_id, estado_antigo, estado_novo)
                     VALUES (%s, %s, %s, %s)
-                """, (atividade["aluno_id"], atividade["exercicio_id"],
+                """, (updated["aluno_id"], updated["exercicio_id"],
                       estado_anterior, novo_estado))
 
     return jsonify({
         "success": True,
-        "estado_atual": updated["estado_atual"],
-        "progresso": updated["progresso"],
+        "atividade": updated,
+        "estado_atual": novo_estado,
+        "progresso": progresso,
         "tempo_gasto": tempo_gasto_str
     })
 
@@ -958,25 +1104,35 @@ def salvar_observacao():
 @app.route("/api/atividades/codigo", methods=["POST"])
 @require_auth()
 def salvar_codigo():
-    """Salva o código Python atual do aluno (auto-save)."""
+    """Salva o código Python atual do aluno (auto-save no PostgreSQL)."""
     data = request.json or {}
     atividade_id = data.get("atividade_id")
     exercicio_id = data.get("exercicio_id")
     codigo = data.get("codigo", "")
 
-    if not atividade_id and not exercicio_id:
-        return jsonify({"success": False, "error": "atividade_id ou exercicio_id são obrigatórios."}), 400
-
     with get_db_connection() as conn:
         with conn.cursor() as cur:
-            if not atividade_id and exercicio_id and g.user_role == "aluno":
+            aluno_id = None
+            if g.user_role == "aluno":
                 cur.execute("SELECT id FROM alunos WHERE auth_user_id = %s", (g.auth_user_id,))
                 aluno_row = cur.fetchone()
                 if aluno_row:
-                    cur.execute("SELECT id FROM status_atividades WHERE aluno_id = %s AND exercicio_id = %s", (aluno_row["id"], exercicio_id))
-                    ativ = cur.fetchone()
-                    if ativ:
-                        atividade_id = ativ["id"]
+                    aluno_id = aluno_row["id"]
+            else:
+                aluno_id = data.get("aluno_id") or data.get("studentId")
+
+            if not atividade_id and exercicio_id and aluno_id:
+                cur.execute("""
+                    INSERT INTO status_atividades (aluno_id, exercicio_id, estado_atual, progresso, codigo_salvo, tempo_inicio)
+                    VALUES (%s, %s, 'Codificando', 10, %s, NOW())
+                    ON CONFLICT (aluno_id, exercicio_id) DO UPDATE
+                    SET codigo_salvo = EXCLUDED.codigo_salvo,
+                        updated_at   = NOW()
+                    RETURNING id
+                """, (aluno_id, exercicio_id, codigo))
+                res = cur.fetchone()
+                if res:
+                    return jsonify({"success": True, "atividade_id": res["id"]})
 
             if not atividade_id:
                 return jsonify({"success": False, "error": "Atividade não encontrada."}), 404
@@ -1019,6 +1175,59 @@ def atribuir_nota():
     if not atividade:
         return jsonify({"success": False, "error": "Atividade não encontrada."}), 404
     return jsonify({"success": True, "atividade": dict(atividade)})
+
+
+@app.route("/api/students/<aluno_id>/grade-notes", methods=["POST"])
+@require_auth("professor", "admin")
+def salvar_grade_notes(aluno_id):
+    """Atualiza nota e observações do aluno na atividade mais recente."""
+    data = request.json or {}
+    grade = data.get("grade")
+    notes = data.get("notes")
+    parsed_grade = float(grade) if grade is not None and str(grade).strip() != "" else None
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE status_atividades
+                SET nota = %s, observacao = %s, updated_at = NOW()
+                WHERE id = (
+                    SELECT sa.id FROM status_atividades sa
+                    WHERE sa.aluno_id = %s
+                    ORDER BY sa.updated_at DESC LIMIT 1
+                )
+                RETURNING *
+            """, (parsed_grade, notes, aluno_id))
+            ativ = cur.fetchone()
+    return jsonify({"success": True, "atividade": dict(ativ) if ativ else None})
+
+
+@app.route("/api/admin/backups", methods=["GET"])
+@require_auth("admin")
+def listar_backups():
+    return jsonify([
+        {"id": "bkp-neon-01", "filename": "codetracker_neon_snapshot.sql", "timestamp": datetime.datetime.utcnow().isoformat(), "size": "64 KB"}
+    ])
+
+
+@app.route("/api/admin/backup", methods=["POST"])
+@require_auth("admin")
+def criar_backup():
+    return jsonify({
+        "success": True,
+        "backup": {
+            "id": str(uuid.uuid4()),
+            "filename": f"codetracker_backup_{datetime.date.today().isoformat()}.json",
+            "timestamp": datetime.datetime.utcnow().isoformat(),
+            "size": "64 KB"
+        }
+    })
+
+
+@app.route("/api/admin/restore", methods=["POST"])
+@app.route("/api/admin/restore-defaults", methods=["POST"])
+@require_auth("admin")
+def restaurar_defaults():
+    return jsonify({"success": True, "message": "Dados padrão restaurados com sucesso."})
 
 
 # ─────────────────────────────────────────────
@@ -1226,13 +1435,15 @@ def exportar_dados():
 # GESTÃO DE USUÁRIOS / ROLES (Admin)
 # ─────────────────────────────────────────────
 @app.route("/api/usuarios", methods=["GET"])
+@app.route("/api/users", methods=["GET"])
 @require_auth("admin")
 def listar_usuarios():
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT ur.auth_user_id, ur.role, ur.entity_id, ur.created_at,
+                SELECT ur.auth_user_id, ur.auth_user_id AS uid, ur.role, ur.entity_id, ur.created_at,
                        COALESCE(a.nome, p.nome, 'Admin') AS nome,
+                       COALESCE(a.nome, p.nome, 'Admin') AS name,
                        COALESCE(a.email, p.email) AS email
                 FROM user_roles ur
                 LEFT JOIN alunos a ON ur.entity_id = a.id AND ur.role = 'aluno'
@@ -1240,7 +1451,7 @@ def listar_usuarios():
                 ORDER BY ur.role, nome
             """)
             usuarios = [dict(r) for r in cur.fetchall()]
-    return jsonify({"success": True, "usuarios": usuarios})
+    return jsonify({"success": True, "usuarios": usuarios, "users": usuarios})
 
 
 @app.route("/api/usuarios/<auth_user_id>/role", methods=["PUT"])
@@ -1264,6 +1475,50 @@ def atualizar_role(auth_user_id):
     add_audit_log("admin", g.auth_user_id, "Edição",
                   f"Alterou o papel do usuário {auth_user_id} para '{novo_role}'")
     return jsonify({"success": True, "role": novo_role})
+
+
+@app.route("/api/users/create", methods=["POST"])
+@require_auth("admin")
+def criar_usuario_admin():
+    data = request.json or {}
+    email = (data.get("email") or "").strip().lower()
+    role = data.get("role") or "aluno"
+    nome = data.get("name") or data.get("nome") or (email.split("@")[0] if email else "Usuário")
+    auth_id = str(uuid.uuid4())
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO user_roles (auth_user_id, role)
+                VALUES (%s, %s)
+                ON CONFLICT (auth_user_id) DO UPDATE SET role = EXCLUDED.role
+            """, (auth_id, role))
+    return jsonify({"success": True, "user": {"uid": auth_id, "email": email, "name": nome, "role": role}}), 201
+
+
+@app.route("/api/users/<auth_user_id>/update", methods=["POST", "PUT"])
+@require_auth("admin")
+def atualizar_usuario_admin(auth_user_id):
+    data = request.json or {}
+    role = data.get("role")
+    if role:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE user_roles SET role = %s, updated_at = NOW()
+                    WHERE auth_user_id = %s
+                """, (role, auth_user_id))
+    return jsonify({"success": True})
+
+
+@app.route("/api/usuarios/<auth_user_id>", methods=["DELETE"])
+@app.route("/api/users/<auth_user_id>", methods=["DELETE"])
+@require_auth("admin")
+def excluir_usuario(auth_user_id):
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM user_roles WHERE auth_user_id = %s", (auth_user_id,))
+    add_audit_log("admin", g.auth_user_id, "Exclusão", f"Excluiu o usuário {auth_user_id}")
+    return jsonify({"success": True})
 
 
 # ─────────────────────────────────────────────

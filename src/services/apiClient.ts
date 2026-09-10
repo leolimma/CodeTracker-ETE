@@ -7,6 +7,7 @@
  * Todas as requisições adicionam automaticamente o token JWT do Neon Auth.
  */
 
+export { getAccessToken } from "./neonAuth";
 import { getAccessToken } from "./neonAuth";
 import type {
   ClassItem, Student, Exercise, StatusAtividade, StatusLog,
@@ -14,7 +15,7 @@ import type {
 } from "../types";
 
 // Base URL da API — em produção usa caminhos relativos no mesmo domínio (ou VITE_API_URL se fornecida), em dev aponta para :5000
-const API_BASE = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? "" : "http://localhost:5000");
+const API_BASE = (import.meta as any).env?.VITE_API_URL || ((import.meta as any).env?.PROD ? "" : "http://localhost:5000");
 
 // ─────────────────────────────────────────────
 // Função base de fetch com autenticação

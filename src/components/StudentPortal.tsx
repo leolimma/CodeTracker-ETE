@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { ClassItem, Student, Exercise } from "../types";
 import PythonEditor from "./PythonEditor";
-
+import { getTurmas, getAlunos, getExercicios, getAlunoDados, getAccessToken } from "../services/apiClient";
 
 interface StudentPortalProps {
   onStatusUpdateTrigger?: () => void;
@@ -40,19 +40,16 @@ export default function StudentPortal({ onStatusUpdateTrigger, overrideStudent, 
   const [submittingStatus, setSubmittingStatus] = useState<string | null>(null);
   const [allExercises, setAllExercises] = useState<Exercise[]>([]);
 
-  // 1. Load Classes (Realtime Firestore or Poll)
+  // 1. Load Classes from Database
   useEffect(() => {
-    
-      fetch("/api/classes")
-        .then((res) => res.json())
-        .then((data) => {
-          setClasses(data);
-          if (data.length > 0) {
-            setSelectedClassId(data[0].id);
-          }
-        })
-        .catch((err) => console.error("Error loading classes:", err));
-    
+    getTurmas()
+      .then((data) => {
+        setClasses(data);
+        if (data.length > 0) {
+          setSelectedClassId(data[0].id);
+        }
+      })
+      .catch((err) => console.error("Error loading classes:", err));
   }, []);
 
   // Sync with override student if provided (useful for side-by-side simulator)
@@ -60,7 +57,7 @@ export default function StudentPortal({ onStatusUpdateTrigger, overrideStudent, 
     if (overrideStudent) {
       setCurrentStudent(overrideStudent);
       setIsLoggedIn(true);
-      setSelectedClassId(overrideStudent.classId);
+      setSelectedClassId(overrideStudent.classId || overrideStudent.turma_id);
     }
   }, [overrideStudent]);
 
@@ -68,8 +65,7 @@ export default function StudentPortal({ onStatusUpdateTrigger, overrideStudent, 
   useEffect(() => {
     if (!selectedClassId) return;
 
-    fetch(`/api/classes/${selectedClassId}/students`)
-      .then((res) => res.json())
+    getAlunos(selectedClassId)
       .then((data) => {
         setStudents(data);
         setSelectedStudentId("");
@@ -91,82 +87,64 @@ export default function StudentPortal({ onStatusUpdateTrigger, overrideStudent, 
     }
   }, [students, isLoggedIn, currentStudent?.id]);
 
-  // Auto-login matching firebaseUser email
+  // Auto-login matching authenticated student from database
   useEffect(() => {
-    if (overrideStudent) return; // Keep simulation override
-    if (!firebaseUser || firebaseUser.role !== "aluno" || isLoggedIn) return;
+    if (overrideStudent) return;
+    if (isLoggedIn) return;
 
-    const emailToMatch = firebaseUser.email?.toLowerCase().trim();
-    if (!emailToMatch) return;
-
-    let isMounted = true;
-
-    const attemptAutoLogin = async () => {
-      try {
-        const res = await fetch("/api/students");
-        if (res.ok) {
-          const allStudents: Student[] = await res.json();
-          if (!isMounted) return;
-          const match = allStudents.find((s) => s.email?.toLowerCase().trim() === emailToMatch);
-          if (match) {
-            setSelectedClassId(match.classId);
-            setSelectedStudentId(match.id);
-            setCurrentStudent(match);
-            setIsLoggedIn(true);
-            setStatusMsg(`Status: ${getFriendlyStatus(match.status)}`);
-          }
+    getAlunoDados()
+      .then((dados) => {
+        if (dados && dados.aluno) {
+          setCurrentStudent(dados.aluno);
+          setSelectedClassId(dados.aluno.turma_id || dados.aluno.classId);
+          setSelectedStudentId(dados.aluno.id);
+          setIsLoggedIn(true);
+          setStatusMsg(`Status: ${getFriendlyStatus(dados.aluno.status || "IDLE")}`);
         }
-      } catch (err) {
-        console.error("Error auto-logging student:", err);
-      }
-    };
+      })
+      .catch(() => {
+        // Not logged in as aluno directly
+      });
+  }, [isLoggedIn, overrideStudent]);
 
-    attemptAutoLogin();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [firebaseUser, isLoggedIn, overrideStudent]);
-
-  // 4. Periodically fetch active exercise if logged in to stay synchronized in real-time (Realtime Firestore or Poll)
+  // 4. Periodically fetch active exercise if logged in to stay synchronized with PostgreSQL
   useEffect(() => {
     if (!isLoggedIn || !currentStudent) return;
 
-    
-      const fetchActiveState = () => {
-        fetch("/api/classes")
-          .then((res) => res.json())
-          .then((allClasses: ClassItem[]) => {
-            const cls = allClasses.find((c) => c.id === currentStudent.classId);
-            if (cls) {
-              setCurrentClass(cls);
-              if (cls.activeExerciseId) {
-                fetch("/api/exercises")
-                  .then((res) => res.json())
-                  .then((exercises: Exercise[]) => {
-                    setAllExercises(exercises);
-                    const ex = exercises.find((e) => e.id === cls.activeExerciseId);
-                    setActiveExercise(ex || null);
-                  });
-              } else {
-                setActiveExercise(null);
-              }
-            }
-          });
-      };
+    const fetchActiveState = async () => {
+      try {
+        const [allCls, allEx] = await Promise.all([
+          getTurmas().catch(() => []),
+          getExercicios().catch(() => [])
+        ]);
+        setAllExercises(allEx);
 
-      fetchActiveState();
-      const interval = setInterval(fetchActiveState, 3000); // Poll active state every 3 seconds
-      return () => clearInterval(interval);
-    
-  }, [isLoggedIn, currentStudent, classes]);
+        const currentTurmaId = currentStudent.turma_id || currentStudent.classId;
+        const cls = allCls.find((c) => c.id === currentTurmaId);
+        if (cls) {
+          setCurrentClass(cls);
+          const activeId = cls.exercicio_ativo_id || cls.activeExerciseId;
+          if (activeId) {
+            const ex = allEx.find((e) => e.id === activeId);
+            setActiveExercise(ex || null);
+          } else {
+            setActiveExercise(null);
+          }
+        }
+      } catch (err) {
+        console.error("Error syncing student active state:", err);
+      }
+    };
+
+    fetchActiveState();
+    const interval = setInterval(fetchActiveState, 3500);
+    return () => clearInterval(interval);
+  }, [isLoggedIn, currentStudent?.id, currentStudent?.turma_id]);
 
   // Handle student login action
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedClassId || !selectedStudentId) return;
-
-
 
     fetch("/api/student/login", {
       method: "POST",
@@ -180,7 +158,7 @@ export default function StudentPortal({ onStatusUpdateTrigger, overrideStudent, 
       .then((student: Student) => {
         setCurrentStudent(student);
         setIsLoggedIn(true);
-        setStatusMsg(`Status: ${getFriendlyStatus(student.status)}`);
+        setStatusMsg(`Status: ${getFriendlyStatus(student.status || "IDLE")}`);
       })
       .catch((err) => alert(err.message));
   };
@@ -194,8 +172,6 @@ export default function StudentPortal({ onStatusUpdateTrigger, overrideStudent, 
       setCurrentStudent(null);
       setSelectedStudentId("");
       setSearchTerm("");
-      
-
       window.location.reload();
     }
   };
@@ -212,36 +188,37 @@ export default function StudentPortal({ onStatusUpdateTrigger, overrideStudent, 
   };
 
   // Update student status action
-  const updateStatus = (newStatus: "CODING" | "HELP" | "PAUSED" | "COMPLETED") => {
+  const updateStatus = async (newStatus: "CODING" | "HELP" | "PAUSED" | "COMPLETED") => {
     if (!currentStudent) return;
     setSubmittingStatus(newStatus);
 
-    // Calculate simulated progress based on status clicks
-    let newProgress = currentStudent.progress;
+    let newProgress = currentStudent.progress || 0;
     if (newStatus === "COMPLETED") {
       newProgress = 100;
-    } else if (newStatus === "CODING" && currentStudent.progress === 0) {
+    } else if (newStatus === "CODING" && newProgress === 0) {
       newProgress = 15;
-    } else if (newStatus === "CODING" && currentStudent.progress < 90) {
-      newProgress = Math.min(90, currentStudent.progress + 15);
+    } else if (newStatus === "CODING" && newProgress < 90) {
+      newProgress = Math.min(90, newProgress + 15);
     }
 
+    try {
+      const token = await getAccessToken();
+      const res = await fetch("/api/student/status", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { "Authorization": `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({
+          studentId: currentStudent.id,
+          exercicio_id: activeExercise?.id,
+          status: newStatus,
+          progress: newProgress
+        })
+      });
 
-
-    fetch("/api/student/status", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        studentId: currentStudent.id,
-        status: newStatus,
-        progress: newProgress
-      })
-    })
-      .then((res) => res.json())
-      .then((updatedStudent: Student) => {
-        setCurrentStudent(updatedStudent);
-        
-        // Setup interactive notification messages
+      if (res.ok) {
+        setCurrentStudent(prev => prev ? { ...prev, status: newStatus, progress: newProgress } : null);
         if (newStatus === "CODING") {
           setStatusMsg("Status Atualizado: Desenvolvendo código do exercício.");
         } else if (newStatus === "HELP") {
@@ -249,16 +226,15 @@ export default function StudentPortal({ onStatusUpdateTrigger, overrideStudent, 
         } else if (newStatus === "PAUSED") {
           setStatusMsg("Status Atualizado: Atividade pausada.");
         } else if (newStatus === "COMPLETED") {
-          setStatusMsg("Status Atualizado: Parabéns! Exercício finalizado e enviado para revisão.");
+          setStatusMsg("Parabéns! Atividade finalizada com sucesso. O professor já pode avaliar.");
         }
-
-        // Notify parent component (dashboard) to trigger refresh
-        if (onStatusUpdateTrigger) {
-          onStatusUpdateTrigger();
-        }
-      })
-      .catch((err) => console.error("Error updating status:", err))
-      .finally(() => setSubmittingStatus(null));
+        if (onStatusUpdateTrigger) onStatusUpdateTrigger();
+      }
+    } catch (err) {
+      console.error("Erro ao atualizar status:", err);
+    } finally {
+      setSubmittingStatus(null);
+    }
   };
 
   // Filter student lists based on search
