@@ -49,6 +49,23 @@ limiter = Limiter(
 )
 
 
+# Security Headers & Content Security Policy (CSP) para Pyodide (Wasm/eval)
+@app.after_request
+def set_security_headers(response):
+    csp = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://fonts.googleapis.com; "
+        "font-src 'self' data: https://fonts.gstatic.com; "
+        "connect-src 'self' https://cdn.jsdelivr.net https://*.neon.tech https://generativelanguage.googleapis.com https://*.onrender.com http://localhost:*; "
+        "img-src 'self' data: blob: https:; "
+        "worker-src 'self' blob: https://cdn.jsdelivr.net; "
+        "child-src 'self' blob:;"
+    )
+    response.headers["Content-Security-Policy"] = csp
+    return response
+
+
 # ─────────────────────────────────────────────
 # Utilitários
 # ─────────────────────────────────────────────
