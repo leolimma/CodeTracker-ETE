@@ -1,0 +1,2 @@
+# Garantir que scripts bash mantenham quebras de linha LF no Git
+*.sh text eol=lf

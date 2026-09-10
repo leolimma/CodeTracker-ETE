@@ -13,8 +13,8 @@ import type {
   AuditLog, ProfessorDashboardData, AIMensagem, Professor
 } from "../types";
 
-// Base URL da API — em produção aponta para o Render, em dev para o Flask local
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:5000";
+// Base URL da API — em produção usa caminhos relativos no mesmo domínio (ou VITE_API_URL se fornecida), em dev aponta para :5000
+const API_BASE = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? "" : "http://localhost:5000");
 
 // ─────────────────────────────────────────────
 // Função base de fetch com autenticação

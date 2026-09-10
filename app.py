@@ -20,7 +20,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from dotenv import load_dotenv
 
-from database import get_db_connection
+from database import get_db_connection, get_database_url
 from auth import require_auth, get_current_user, create_access_token, hash_password, verify_password
 
 load_dotenv()
@@ -111,20 +111,24 @@ def serve_react_spa(path):
 @app.route("/api/health")
 def health_check():
     """Health check para Render e monitoramento."""
+    db_status = "ok"
     try:
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT 1")
-        db_status = "ok"
+        if get_database_url():
+            with get_db_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT 1")
+        else:
+            db_status = "database_url_not_configured"
     except Exception as e:
-        db_status = f"error: {e}"
+        db_status = f"degraded: {e}"
 
+    # Retorna sempre 200 para confirmar ao Render que o servidor web está operacional
     return jsonify({
         "status": "ok" if db_status == "ok" else "degraded",
         "database": db_status,
         "environment": FLASK_ENV,
         "timestamp": datetime.datetime.utcnow().isoformat() + "Z"
-    }), 200 if db_status == "ok" else 503
+    }), 200
 
 
 # ─────────────────────────────────────────────
