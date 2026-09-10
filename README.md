@@ -1,4 +1,4 @@
-# CodeTracker ETE - Aplicação Fullstack com AI
+# CodeTracker ETE - Aplicação para acompanhamento de aulas de programação em python
 
 Esta é a documentação completa para rodar sua aplicação localmente e realizar o deploy (implantação) na nuvem.
 
