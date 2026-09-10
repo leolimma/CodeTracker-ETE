@@ -26,5 +26,3 @@ services:
         generateValue: true  # Render gera chave aleatória segura automaticamente
       - key: GEMINI_API_KEY
         sync: false
-      - key: VITE_API_URL
-        value: https://codetracker-ete.onrender.com

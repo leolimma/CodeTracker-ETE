@@ -14,8 +14,13 @@ import type {
   AuditLog, ProfessorDashboardData, AIMensagem, Professor
 } from "../types";
 
-// Base URL da API — em produção usa caminhos relativos no mesmo domínio (ou VITE_API_URL se fornecida), em dev aponta para :5000
-const API_BASE = (import.meta as any).env?.VITE_API_URL || ((import.meta as any).env?.PROD ? "" : "http://localhost:5000");
+// Base URL da API:
+// Em produção (ou quando o frontend é servido pelo mesmo host do backend), SEMPRE usamos caminho relativo ("")
+// para garantir compatibilidade com qualquer URL da instância (Render, domínio próprio, etc.) sem falhas de CORS ou URLs antigas.
+const isProd = Boolean((import.meta as any).env?.PROD);
+const API_BASE = isProd 
+  ? "" 
+  : ((import.meta as any).env?.VITE_API_URL || "http://localhost:5000");
 
 // ─────────────────────────────────────────────
 // Função base de fetch com autenticação
@@ -35,23 +40,32 @@ async function apiFetch<T>(
     headers["Authorization"] = `Bearer ${token}`;
   }
 
-  const response = await fetch(`${API_BASE}${endpoint}`, {
-    ...options,
-    headers,
-  });
+  // Timeout de 15 segundos para evitar promises bloqueadas indefinidamente
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
 
-  if (!response.ok) {
-    let errorMessage = `Erro ${response.status}: ${response.statusText}`;
-    try {
-      const errorData = await response.json();
-      errorMessage = errorData.error || errorData.message || errorMessage;
-    } catch {
-      // ignora erros de parse do JSON de erro
+  try {
+    const response = await fetch(`${API_BASE}${endpoint}`, {
+      ...options,
+      headers,
+      signal: options.signal || controller.signal,
+    });
+
+    if (!response.ok) {
+      let errorMessage = `Erro ${response.status}: ${response.statusText}`;
+      try {
+        const errorData = await response.json();
+        errorMessage = errorData.error || errorData.message || errorMessage;
+      } catch {
+        // ignora erros de parse do JSON de erro
+      }
+      throw new Error(errorMessage);
     }
-    throw new Error(errorMessage);
-  }
 
-  return response.json() as Promise<T>;
+    return response.json() as Promise<T>;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 // ─────────────────────────────────────────────
@@ -291,6 +305,15 @@ export async function getLogs(): Promise<StatusLog[]> {
 
 export async function getAuditLogs(limit = 100): Promise<AuditLog[]> {
   return apiFetch<AuditLog[]>(`/api/admin/audits?limit=${limit}`);
+}
+
+export async function getBackups(): Promise<any[]> {
+  return apiFetch<any[]>("/api/admin/backups");
+}
+
+export async function getUsers(): Promise<any[]> {
+  const data = await apiFetch<{ success: boolean; users?: any[]; usuarios?: any[] }>("/api/users");
+  return data.users || data.usuarios || (Array.isArray(data) ? data : []);
 }
 
 // ─────────────────────────────────────────────

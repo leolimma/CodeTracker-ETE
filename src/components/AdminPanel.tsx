@@ -22,7 +22,17 @@ import {
   GraduationCap
 } from "lucide-react";
 import { ClassItem, Student, Exercise } from "../types";
-import { getProfessores, getAuditLogs, getTurmas, getAlunos, getExercicios, exportarDados } from "../services/apiClient";
+import { 
+  getProfessores, 
+  getAuditLogs, 
+  getTurmas, 
+  getAlunos, 
+  getExercicios, 
+  exportarDados,
+  getBackups,
+  getUsers,
+  getAccessToken
+} from "../services/apiClient";
 
 
 // Local types matching server.ts models
@@ -137,11 +147,11 @@ export default function AdminPanel({ currentUser, onForceStatusUpdate }: AdminPa
       ] = await Promise.all([
         getProfessores().catch(() => []),
         getAuditLogs().catch(() => []),
-        fetch("/api/admin/backups").then(r => r.ok ? r.json() : []).catch(() => []),
+        getBackups().catch(() => []),
         getTurmas().catch(() => []),
         getAlunos().catch(() => []),
         getExercicios().catch(() => []),
-        fetch("/api/users").then(r => r.ok ? r.json() : { users: [] }).then(d => d.users || d.usuarios || (Array.isArray(d) ? d : [])).catch(() => [])
+        getUsers().catch(() => [])
       ]);
 
       setTeachers((profs || []).map((p: any) => ({
@@ -221,9 +231,13 @@ export default function AdminPanel({ currentUser, onForceStatusUpdate }: AdminPa
     }
 
     try {
+      const token = await getAccessToken();
       const response = await fetch(url, {
         method,
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          ...(token ? { "Authorization": `Bearer ${token}` } : {})
+        },
         body: JSON.stringify(payload)
       });
 
@@ -282,8 +296,14 @@ export default function AdminPanel({ currentUser, onForceStatusUpdate }: AdminPa
       // 1. Sync deletion to Firestore if real Firebase database is active
       
 
-      // 2. Perform Express JSON Server backend deletion
-      const response = await fetch(url, { method: "DELETE" });
+      // 2. Perform backend deletion
+      const token = await getAccessToken();
+      const response = await fetch(url, { 
+        method: "DELETE",
+        headers: {
+          ...(token ? { "Authorization": `Bearer ${token}` } : {})
+        }
+      });
       const resData = await response.json();
       if (!response.ok) {
         throw new Error(resData.error || "Erro ao excluir o registro.");
@@ -312,9 +332,13 @@ export default function AdminPanel({ currentUser, onForceStatusUpdate }: AdminPa
     }
 
     try {
+      const token = await getAccessToken();
       const response = await fetch("/api/students/import-csv", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          ...(token ? { "Authorization": `Bearer ${token}` } : {})
+        },
         body: JSON.stringify({
           csvText,
           classId: csvTargetClassId,
@@ -342,9 +366,13 @@ export default function AdminPanel({ currentUser, onForceStatusUpdate }: AdminPa
   const handleCreateBackup = async () => {
     setIsLoading(true);
     try {
+      const token = await getAccessToken();
       const res = await fetch("/api/admin/backup", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          ...(token ? { "Authorization": `Bearer ${token}` } : {})
+        },
         body: JSON.stringify({
           actorName: currentUser?.name || "admin",
           actorType: currentUser?.role || "Administrador"
@@ -368,9 +396,13 @@ export default function AdminPanel({ currentUser, onForceStatusUpdate }: AdminPa
 
     setIsLoading(true);
     try {
+      const token = await getAccessToken();
       const res = await fetch("/api/admin/restore", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          ...(token ? { "Authorization": `Bearer ${token}` } : {})
+        },
         body: JSON.stringify({
           backupId,
           actorName: currentUser?.name || "admin",
@@ -396,9 +428,13 @@ export default function AdminPanel({ currentUser, onForceStatusUpdate }: AdminPa
 
     setIsLoading(true);
     try {
+      const token = await getAccessToken();
       const res = await fetch("/api/admin/restore-defaults", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          ...(token ? { "Authorization": `Bearer ${token}` } : {})
+        },
         body: JSON.stringify({
           actorName: currentUser?.name || "admin",
           actorType: currentUser?.role || "Administrador"

@@ -1346,10 +1346,14 @@ def listar_audits():
     limit = min(int(request.args.get("limit", 100)), 500)
     with get_db_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                "SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT %s",
-                (limit,)
-            )
+            cur.execute("""
+                SELECT id, auth_user_id, action, description, timestamp, ip_address,
+                       user_type, user_type AS "userType",
+                       user_name, user_name AS "userName"
+                FROM audit_logs
+                ORDER BY timestamp DESC
+                LIMIT %s
+            """, (limit,))
             audits = [dict(r) for r in cur.fetchall()]
     return jsonify(audits)
 
